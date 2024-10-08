@@ -75,6 +75,17 @@ int llopen(LinkLayer connectionParameters)
     newtio.c_cc[VTIME] = 0; 
     newtio.c_cc[VMIN] = 5;  //A função read só dá return depois de serem recebidos pelo menos 5 caracteres.
 
+    tcflush(fd, TCIOFLUSH);
+
+    //Defenir novas configurações da porta de série:
+
+    if(tcsetattr(fd, TCSANOW, &newtio) == -1){
+        perror("tcsetattr");
+        exit(-1);
+    }
+
+    printf("New termio structure set\n");
+
     
 
 
