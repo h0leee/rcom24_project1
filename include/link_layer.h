@@ -4,6 +4,28 @@
 #ifndef _LINK_LAYER_H_
 #define _LINK_LAYER_H_
 
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <termios.h>
+#include <unistd.h>
+#include <signal.h>
+#include <time.h>
+
+#define _POSIX_SOURCE 1 // POSIX compliant source
+
+#define FALSE 0
+#define TRUE 1
+#define BAUDRATE B38400 //Velocidade de transmissão de dados (simbolos != bits)
+#define BUF_SIZE 256
+
+#define FLAG 0x7E //Flag que marca o inicio e fim da trama
+#define A_SET 0x03 //estabelecer
+#define A_UA 0x01 //confirmar
+
 typedef enum
 {
     LlTx,
