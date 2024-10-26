@@ -310,15 +310,75 @@ int llwrite(const unsigned char *buf, int bufSize)
 
 
 
+
+
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
-int llread(unsigned char *packet)
+int llread(unsigned char *buffer)
 {
-    // TODO
+    int bytesread = 0; // vai contar o numero de bytes lidos do frame recebido
 
-    return 0;
+    static int packet = 0; 
+
+    unsigned char stuffedMsg[MAX_BUFFER_SIZE]; // vai armazenar o frame com byte stuffing
+    unsigned char unstuffedMsg[MAX_PACKET_SIZE + 7]; // vai armazenar o frame depouis do byte destuffing
+
+    STOP = FALSE;
+    state = START;
+
+    int bytes = 0; // vai contar o numero de bytes de cada leitura
+
+    while (STOP == FALSE) // neste loop vai ler bytes ate receber tudo
+    {
+        if (stateMachine(A_T, C_INF(packet), 1, 0)) // a state machine vai processar os daddos recebidos
+        {
+            stuffedMsg[bytesread] = readbyte;
+            bytesread++;
+        }
+    }
+
+    printf("DATA RECEIVED\n"); // debug
+
+    int s = destuffing(stuffedMsg, bytesread, unstuffedMsg); // destuffing e guardamos o tamanho total da mensagem em s
+
+    unsigned char receivedBCC2 = unstuffedMsg[s - 2]; 
+
+    unsigned char expectedBCC2 = calculateBCC2(unstuffedMsg, s - 2, 4);
+
+    if (receivedBCC2 == expectedBCC2 && unstuffedMsg[2] == C_INF(packet)) // verificamos se o recebido era o que era esperado e se o bytre de controlo esta correto 
+    {
+        packet = (packet + 1) % 2;
+        sendBuffer(A_T, RR(packet)); //RR é uma mensagem para confirmar que o frame foi recebido
+        memcpy(buffer, &unstuffedMsg[4], s - 5); // é feita uma copia para o buffer
+        return s - 5;
+    }
+
+    //este else usamos para descartar frame duplicado mas confirmamos na mesma a receção com o RR
+    else if (receivedBCC2 == expectedBCC2)
+    {
+        sendBuffer(A_T, RR(packet));
+        tcflush(fd, TCIFLUSH); // aqui limpamos o buffer
+        printf("Duplicate packet!\n");
+    }
+    // se o BCC2 recebido nao for o esperado é enviada o REJ (mensagem de rejeiçãop)
+    else
+    {
+        sendBuffer(A_T, REJ(packet));
+        tcflush(fd, TCIFLUSH); //limpamos na mesma o buffer
+        printf("Error in BCC2, sent REJ\n");
+    }
+    return -1;
 }
+
+
+
+
+
+
+
+
+
 
 ////////////////////////////////////////////////
 // LLCLOSE
