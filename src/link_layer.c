@@ -19,9 +19,17 @@ unsigned char tramaRx = 1;
 
 
 
+
+
 typedef enum {
     START, A, C, F, STOP, BCC1, BCC2, ESC, READING_PAYLOAD
 } LinkLayerState;
+
+
+LinkLayerState stateMachines(LinkLayer connectionParameter, int frameType) {
+
+}
+
 
 
 
