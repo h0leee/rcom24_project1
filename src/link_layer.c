@@ -14,21 +14,14 @@ int alarmEnabled = FALSE;
 int alarmCount = 0;
 int timeOut = 0;
 int retransmissions = 0;
-unsigned char tramaTx = 0;
-unsigned char tramaRx = 1;
 
 
 
 
 
-typedef enum {
-    START, A, C, F, STOP, BCC1, BCC2, ESC, READING_PAYLOAD
-} LinkLayerState;
 
 
-LinkLayerState stateMachines(LinkLayer connectionParameter, int frameType) {
 
-}
 
 
 

@@ -15,11 +15,11 @@ int closeSerialPort();
 // Wait for a byte received from the serial port and read it (must
 // check whether a byte was actually received from the return value).
 // Returns -1 on error, 0 if no byte was received, 1 if a byte was received.
-int readByte(char *byte);
+int readByteSerialPort(unsigned char *byte);
 
 // Write up to numBytes to the serial port (must check how many were actually
 // written in the return value).
 // Returns -1 on error, otherwise the number of bytes written.
-int writeBytes(const char *bytes, int numBytes);
+int writeBytesSerialPort(const unsigned char *bytes, int numBytes);
 
 #endif // _SERIAL_PORT_H_
