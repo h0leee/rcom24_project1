@@ -1,6 +1,7 @@
 // Link layer protocol implementation
 
 // depois poderei tentar modular o código da stateMachine
+// llread, stateMachine, getControlPacket, displayStatistics
 
 #include "link_layer.h"
 #include "serial_port.h"
@@ -36,10 +37,10 @@ void alarmHandler(int signal)
     printf("Alarm #%d\n", alarmCount);
 }
 
-int makeConnection(const char *serialPort)
+int makeConnection(LinkLayer* connectionParameters)
 {
 
-    fd = openSerialPort(serialPort, 0_RDWR | 0_NOCTTY);
+    fd = openSerialPort(connectionParameters->serialPort, connectionParameters->baudRate);
 
     struct termios oldtio;
     struct termios newtio;
@@ -81,7 +82,7 @@ int llopen(LinkLayer connectionParameters)
         return -1;
     }
 
-    int fd = makeConnection(connectionParameters.serialPort);
+    int fd = makeConnection(&connectionParameters);
     if (fd < 0)
     {
         perror(connectionParameters.serialPort);
@@ -99,6 +100,7 @@ int llopen(LinkLayer connectionParameters)
     switch (connectionParameters.role)
     {
     case LlTx:
+
         (void)signal(SIGALRM, alarmHandler);
 
         int retransmissions = numberRetransmissions;
@@ -121,7 +123,7 @@ int llopen(LinkLayer connectionParameters)
                             machineState = F;
                         break;
                     case F:
-                        if (byteRead == A_)
+                        if (byteRead == A_RE)
                             machineState = A;
                         break;
                     case A:
@@ -129,7 +131,7 @@ int llopen(LinkLayer connectionParameters)
                             machineState = C;
                         break;
                     case C:
-                        if (byteRead == (A_^ C_UA))
+                        if (byteRead == (A_RE ^ C_UA))
                             machineState = BCC1;
                         break;
                     case BCC1:
@@ -184,7 +186,7 @@ int llopen(LinkLayer connectionParameters)
                 }
             }
         }
-        sendSupervisionFrame(fd, A_UA, C_UA); // Enviar quadro de supervisão de resposta
+        sendSupervisionFrame(fd, A_RE, C_UA); // Enviar quadro de supervisão de resposta
         break;
 
     default:
@@ -292,7 +294,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     unsigned char calculatedBCC2 = buf[0];
     for(int i = 1; i < bufSize; i++) calculatedBCC2 ^= buf[i];
     
-    // Copiar o buffer de dados para o frame
+    // Copiar o buffer de dados, a partir do index 4, para o frame
     memcpy(&frame[4], buf, bufSize);
     frame[bufSize + 4] = calculatedBCC2; // BCC2 inserido no final do frame
 
@@ -516,7 +518,7 @@ int llclose(int showStatistics) {
             if (machineState != STOP) return -1;
 
             // Recetor responde com DISC
-            sendSupervisionFrame(fd, A_DISC, C_DISC);
+            sendSupervisionFrame(fd, A_RE, C_DISC);
 
             // Recetor aguarda UA do transmissor
             machineState = START;
@@ -599,15 +601,18 @@ LinkLayerState stateMachine(int frameType)
 }
 
 
-sendSupervisionFrame(fd, A_byte, C_byte)
-{
+sendSupervisionFrame(fd, A_byte, C_byte) {
     unsigned char sFrame[5] = {FLAG, A_byte, C_byte, A_byte ^ C_byte, FLAG};
-
     return write(fd, sFrame, 5);
 }
 
 
-// para acabar 
+unsigned char getControlFrame(int fd){
+    // to do
+}
+
+
+// to do
 void displayStatistics() {
     printf("AQUI TENHO DE PRINTAR AS STATS");
 }
