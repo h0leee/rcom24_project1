@@ -281,65 +281,64 @@ unsigned char computeBCC2(const unsigned char *buffer, int length, int startByte
 int llwrite(const unsigned char *buf, int bufSize)
 {
     int totalSize = bufSize + 6; // tamanho total do frame, payload e 6 bytes adicionais
-
-    unsigned char frame[totalSize]; // variavel para armazenar o frame antes do stuffing
-
+    unsigned char frame[totalSize]; // variável para armazenar o frame antes do stuffing
     static int frameSequence = 0;
 
     frame[0] = FLAG;
-    frame[1] = A_ER;                            // byte de endereço
+    frame[1] = A_ER;                           // byte de endereço
     frame[2] = C_INF(frameSequence);           // byte de controlo
-    frame[3] = frame[1] ^ frame[2]; // BCC calculado entre o A e o C
+    frame[3] = frame[1] ^ frame[2];            // BCC calculado entre o A e o C
 
     unsigned char calculatedBCC2 = buf[0];
-
-    for(int i=1; i < bufSize; i++) calculatedBCC2 ^= buf[i];
-
-    frame[bufSize + 4] = calculatedBCC2; // é inserido no final do frame
+    for(int i = 1; i < bufSize; i++) calculatedBCC2 ^= buf[i];
+    
+    // Copiar o buffer de dados para o frame
+    memcpy(&frame[4], buf, bufSize);
+    frame[bufSize + 4] = calculatedBCC2; // BCC2 inserido no final do frame
 
     unsigned char stuffedFrame[totalSize * 2]; // vai armazenar o frame depois do stuffing
-
-    // aqui vamos aplicar o stuffing ao frame e copiamos para o stuffedframe
     totalSize = byteStuffing(frame, totalSize, stuffedFrame);
-    stuffedFrame[totalSize] = FLAG; // a flag assinala o fim do processo
+    stuffedFrame[totalSize] = FLAG; // FLAG para o final do frame
     totalSize++;
 
-    // inicialização das variaveis para controlar o alarme e state machine
     STOP = FALSE;
     alarmFired = FALSE;
     alarmCount = 0;
     int attemptCounter = 0;
-
-    // aqui contamos o nr de tentativas e temos rejected para ver se o frame é rejeitado ou nao
     int failedTransmission = 0, successfulTransmission = 0;
 
-
-    while (attemptCounter < numberRetransmissions) // while até o stop ser true ou seja ate o frame ser aceite
+    while (attemptCounter < numberRetransmissions) // Tenta até ao limite de retransmissões
     {
         alarmFired = FALSE;
-        alarm(timeOut);
+        alarm(timeOut); // Define o temporizador
+
         failedTransmission = 0;
         successfulTransmission = 0;
 
-        while(!failedTransmission && !successfulTransmission && !alarmFired) {
-            ssize_t bytesWritten = write(fd, frame, index);
-            auto result = getControlFrame(fd);
+        ssize_t bytesWritten = write(fd, stuffedFrame, totalSize);
+        if (bytesWritten < 0) {
+            perror("Erro ao escrever o frame");
+            continue; // Tenta novamente
+        }
 
-            if(result == 0) continue;
+        while (!failedTransmission && !successfulTransmission && !alarmFired) {
+            int result = getControlFrame(fd);
 
-            else if(result == C_REJ(0) || result == C_REJ(1)) failedTransmission = 1;
+            if (result == -1) continue;
 
-            else if(result == C_RR(0) || result == C_RR(1)) {
+            else if (result == C_REJ(0) || result == C_REJ(1)) failedTransmission = 1;
+
+            else if (result == C_RR(0) || result == C_RR(1)) {
                 successfulTransmission = 1;
-                frameSequence++;
-                frameSequence %= 2; // para termos sempre index 0 ou 1 
+                frameSequence = (frameSequence + 1) % 2; // Alterna o frameSequence entre 0 e 1
             }
         }
-        if (successfulTransmission) break;
+
+        if (successfulTransmission) break; // Se bem-sucedido, sai do loop
         attemptCounter++;
     }
 
-    if(!successfulTransmission) {
+    if (!successfulTransmission) { // Se todas as tentativas falharam
         llclose(fd);
         return -1;
     }
@@ -347,6 +346,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     printf("Data Successfully Accepted!\n"); // debug
     return 0;
 }
+
 
 ////////////////////////////////////////////////
 // LLREAD
