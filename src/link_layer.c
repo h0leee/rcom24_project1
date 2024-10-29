@@ -18,15 +18,18 @@
 #include <time.h>
 
 volatile int STOP = FALSE;
-int alarmEnabled = FALSE;
+int alarmFired = FALSE;
 int alarmCount = 0;
 int numberRetransmissions = 0;
 int timeOut = 0;
+LinkLayerState machineState;
+LinkLayerRole role;
+int fd;
 
 // Alarm function handler
 void alarmHandler(int signal)
 {
-    alarmEnabled = FALSE;
+    alarmFired = FALSE;
     alarmCount++;
 
     printf("Alarm #%d\n", alarmCount);
@@ -35,7 +38,7 @@ void alarmHandler(int signal)
 int makeConnection(const char *serialPort)
 {
 
-    int fd = openSerialPort(serialPort, 0_RDWR | 0_NOCTTY);
+    fd = openSerialPort(serialPort, 0_RDWR | 0_NOCTTY);
 
     struct termios oldtio;
     struct termios newtio;
@@ -69,14 +72,17 @@ int makeConnection(const char *serialPort)
 ////////////////////////////////////////////////
 // LLOPEN
 ////////////////////////////////////////////////
-int llopen(LinkLayer connectionParameters) {
+int llopen(LinkLayer connectionParameters)
+{
     // Abrir porta serial e verificar erro
-    if (openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate) < 0) {
+    if (openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate) < 0)
+    {
         return -1;
     }
 
     int fd = makeConnection(connectionParameters.serialPort);
-    if (fd < 0) {
+    if (fd < 0)
+    {
         perror(connectionParameters.serialPort);
         return -1;
     }
@@ -84,40 +90,52 @@ int llopen(LinkLayer connectionParameters) {
     printf("New termio structure set\n");
 
     int alarmTriggered = FALSE;
-    LinkLayerState machineState = START;
+    machineState = START;
     unsigned char byteRead;
     timeOut = connectionParameters.timeout;
     numberRetransmissions = connectionParameters.nRetransmissions; // Usar uma cópia local para preservar o valor original
 
-    switch (connectionParameters.role) {
+    switch (connectionParameters.role)
+    {
     case LlTx:
         (void)signal(SIGALRM, alarmHandler);
 
         int retransmissions = numberRetransmissions;
 
-        while (retransmissions > 0 && machineState != STOP) {
+        while (retransmissions > 0 && machineState != STOP)
+        {
+
             sendSupervisionFrame(fd, A_ER, C_SET);
             alarm(timeOut);
             alarmTriggered = FALSE;
 
-            while (machineState != STOP && !alarmTriggered) {
-                if (read(fd, &byteRead, 1) > 0) {
-                    switch (machineState) {
+            while (machineState != STOP && !alarmTriggered)
+            {
+                if (read(fd, &byteRead, 1) > 0)
+                {
+                    switch (machineState)
+                    {
                     case START:
-                        if (byteRead == FLAG) machineState = F;
+                        if (byteRead == FLAG)
+                            machineState = F;
                         break;
                     case F:
-                        if (byteRead == A_UA) machineState = A;
+                        if (byteRead == A_UA)
+                            machineState = A;
                         break;
                     case A:
-                        if (byteRead == C_UA) machineState = C;
+                        if (byteRead == C_UA)
+                            machineState = C;
                         break;
                     case C:
-                        if (byteRead == (A_UA ^ C_UA)) machineState = BCC1;
+                        if (byteRead == (A_UA ^ C_UA))
+                            machineState = BCC1;
                         break;
                     case BCC1:
-                        if (byteRead == FLAG) machineState = STOP;
-                        else machineState = START;
+                        if (byteRead == FLAG)
+                            machineState = STOP;
+                        else
+                            machineState = START;
                         break;
                     default:
                         break;
@@ -127,28 +145,38 @@ int llopen(LinkLayer connectionParameters) {
 
             retransmissions--; // Reduz o número de retransmissões
         }
-        if (machineState != STOP) return -1;
+        if (machineState != STOP)
+            return -1;
         break;
 
     case LlRx:
-        while (machineState != STOP) {
-            if (read(fd, &byteRead, 1) > 0) { // Corrigido o parêntesis aqui
-                switch (machineState) {
+        while (machineState != STOP)
+        {
+            if (read(fd, &byteRead, 1) > 0)
+            { // Corrigido o parêntesis aqui
+                switch (machineState)
+                {
                 case START:
-                    if (byteRead == FLAG) machineState = F;
+                    if (byteRead == FLAG)
+                        machineState = F;
                     break;
                 case F:
-                    if (byteRead == A_ER) machineState = A;
+                    if (byteRead == A_ER)
+                        machineState = A;
                     break;
                 case A:
-                    if (byteRead == C_SET) machineState = C;
+                    if (byteRead == C_SET)
+                        machineState = C;
                     break;
                 case C:
-                    if (byteRead == (A_ER ^ C_SET)) machineState = BCC1;
+                    if (byteRead == (A_ER ^ C_SET))
+                        machineState = BCC1;
                     break;
                 case BCC1:
-                    if (byteRead == FLAG) machineState = STOP;
-                    else machineState = START;
+                    if (byteRead == FLAG)
+                        machineState = STOP;
+                    else
+                        machineState = START;
                     break;
                 default:
                     break;
@@ -164,7 +192,6 @@ int llopen(LinkLayer connectionParameters) {
 
     return fd; // Retorna o descritor de arquivo da conexão bem-sucedida
 }
-
 
 /////////////////////////////////////////////////////
 // STUFFING
@@ -184,9 +211,9 @@ int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *ou
 
     for (int i = 1; i < inputSize; i++)
     {
-        if (inputMsg[i] == FLAG || inputMsg[i] == ESCAPE) // bytes de controlo, se for igual é necessário stuffing
+        if (inputMsg[i] == FLAG || inputMsg[i] == ESC) // bytes de controlo, se for igual é necessário stuffing
         {
-            outputMsg[stuffedSize++] = ESCAPE; // indica que o próximo byte foi modificado
+            outputMsg[stuffedSize++] = ESC; // indica que o próximo byte foi modificado
             outputMsg[stuffedSize++] = inputMsg[i] ^ 0x20;
         }
         else
@@ -213,7 +240,7 @@ int byteDestuffing(const unsigned char *stuffedMsg, int stuffedSize, unsigned ch
 
     for (int i = 1; i < stuffedSize; i++)
     {
-        if (stuffedMsg[i] == ESCAPE) // vemos se o byte foi mudificado com stuffing para saber se temos de restaurar
+        if (stuffedMsg[i] == ESC) // vemos se o byte foi mudificado com stuffing para saber se temos de restaurar
         {
             originalMsg[destuffedSize++] = stuffedMsg[i + 1] ^ 0x20; // byte é restaurado e incrementamos para a posição seguinte
             i++;
@@ -283,9 +310,9 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     // inicisalização das variaveis para controlar o alarme e state machine
     STOP = FALSE;
-    alarmEnabled = FALSE;
+    alarmFired = FALSE;
     alarmCount = 0;
-    state = START;
+    machineState = START;
 
     // aqui contamos o nr de tentativas e temos rejected para ver se o frame é rejeitado ou nao
     int attemptCount = 0;
@@ -303,7 +330,6 @@ int llwrite(const unsigned char *buf, int bufSize)
             alarmEnabled = TRUE;
             state = START; // start para iniciar a state machine
         }
-
 
         if ((frameSequence == 0 && response == REJ1) || (frameSequence == 1 && response == REJ0)) // verificamos se o frame foi ou nao rejeitado, se REJ1 entao rejected = true
         {
@@ -388,42 +414,167 @@ int llread(unsigned char *buffer)
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
-int llclose(int showStatistics)
-{
-    LinkLayerState machineState = START;
+int llclose(int showStatistics, int isTransmitter) {
+    machineState = START;
     unsigned char byteRead;
-    (void) signal(SIGALRM, alarmHandler);
+    (void)signal(SIGALRM, alarmHandler);
 
-    int retransmissions = numberRetransmissions; // Usar uma cópia local para preservar o valor original
+    int retransmissions = numberRetransmissions;
 
-    while(machineState != STOP && retransmissions > 0) {
+    switch(role) {
+        case LlTx:
+            // Transmissor: inicia desconexão
+        while (retransmissions > 0 && machineState != STOP) {
+            sendSupervisionFrame(fd, A_ER, C_DISC); // Envia DISC
+            alarm(timeOut);
+            alarmFired = FALSE;
 
-        sendSupervisionFrame(fd, A_ER, C_DISC);
-        alarm(timeout);
+            machineState = START;
+            while (!alarmFired && machineState != STOP) {
+                if (read(fd, &byteRead, 1) > 0) {
+                    switch(machineState) {
+                        case START:
+                            if(byteRead == FLAG) machineState = F;
+                            break;
+                        
+                        case F:
+                            if (byteRead == A_ER) machineState = A;
+                            else if(byteRead != FLAG) machineState = START;
+                            break;
+
+                        case A:
+                            if(byteRead == C_DISC) machineState = C;
+                            else if(byteRead == FLAG) machineState = F;
+                            break;
+
+                        case C:
+                            if(byteRead == (A_ER ^ C_DISC)) machineState = BCC1;
+                            else if(byteRead == FLAG) machineState = F;
+                            break;
+
+                        case BCC1:
+                            if (byteRead == FLAG) machineState = STOP;
+                            else machineState = START;
+                            break;
+
+                        default:
+                            break;
+                    }
+                }
+            }
+            retransmissions--;
+        }
+
+        if (machineState != STOP) return -1;
+
+        // Transmissor envia UA para acabar de vez comunicação
+        sendSupervisionFrame(fd, A_ER, C_UA);
+        break;
+
+        case LlRx:
+
+            // Recetor: aguarda DISC do transmissor
+            while (machineState != STOP && retransmissions > 0) {
+            alarm(timeOut);
+            alarmFired = FALSE;
+
+            machineState = START;
+
+            while (!alarmFired && machineState != STOP) {
+                if (read(fd, &byteRead, 1) > 0) {
+                    switch(machineState) {
+                        case START:
+                            if(byteRead == FLAG) machineState = F;
+                            break;
+                        
+                        case F:
+                        // esta cena não sei
+                            if (byteRead == A_ER) machineState = A;
+                            else if(byteRead != FLAG) machineState = START;
+                            break;
+
+                        case A:
+                            if(byteRead == C_DISC) machineState = C;
+                            else if(byteRead == FLAG) machineState = F;
+                            break;
+
+                        case C:
+                        // também afeta esta 
+                            if(byteRead == (A_ER ^ C_DISC)) machineState = BCC1;
+                            else if(byteRead == FLAG) machineState = F;
+                            break;
+
+                        case BCC1:
+                            if (byteRead == FLAG) machineState = STOP;
+                            else machineState = START;
+                            break;
+
+                        default:
+                            break;
+                    }
+                }
+            }
+            retransmissions--;
+            }
+
+            if (machineState != STOP) return -1;
+
+            // Recetor responde com DISC
+            sendSupervisionFrame(fd, A_DISC, C_DISC);
+
+            // Recetor aguarda UA do transmissor
+            machineState = START;
+            while (machineState != STOP && retransmissions > 0) {
+                if (read(fd, &byteRead, 1) > 0) {
+                    switch (machineState)
+                    {
+                    case START:
+                            if(byteRead == FLAG) machineState = F;
+                            break;
+                        
+                        case F:
+                            if (byteRead == A_ER) machineState = A;
+                            else if(byteRead != FLAG) machineState = START;
+                            break;
+
+                        case A:
+                            if(byteRead == C_UA) machineState = C;
+                            else if(byteRead == FLAG) machineState = F;
+                            break;
+
+                        case C:
+                        // também afeta esta 
+                            if(byteRead == (A_ER ^ C_UA)) machineState = BCC1;
+                            else if(byteRead == FLAG) machineState = F;
+                            break;
+
+                        case BCC1:
+                            if (byteRead == FLAG) machineState = STOP;
+                            else machineState = START;
+                            break;
+
+                        default:
+                            break;
+                    }
+                }
+            }
+
+            if (machineState != STOP) return -1;
+            break;
+
+        default:
+            break;
     }
 
 
-    if(showStatistics) {
-        displayStatistics(); 
-    }
-
-    int clstat = closeSerialPort();
-    return clstat;
+    if (showStatistics) displayStatistics();
+    return closeSerialPort();
 }
 
 
 
-
-
-
-
-
-
-
-
-
-
-LinkLayerState stateMachine(int isReceiver, int frameType) {
+LinkLayerState stateMachine(int isReceiver, int frameType)
+{
     switch (frameType)
     {
     case 1:
@@ -432,25 +583,24 @@ LinkLayerState stateMachine(int isReceiver, int frameType) {
         case 1:
             /* code */
             break;
-        
+
         default:
             break;
         }
         break;
-    
+
     default:
         switch (isReceiver)
         {
         case 1:
             break;
-        
+
         default:
             break;
         }
         break;
     }
 }
-
 
 sendSupervisionFrame(fd, A_byte, C_byte)
 {
