@@ -24,10 +24,12 @@ typedef enum {
 } LinkLayerState;
 
 
-LinkLayerState stateMachine(bool isReceiver, int frameType);
+LinkLayerState stateMachine(int frameType);
 
 int sendSupervisionFrame(int fd, unsigned char A_byte, unsigned char C_byte) {}
 
 void displayStatistics();
+
+unsigned char getControlFrame(int fd);
 
 #endif 

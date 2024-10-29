@@ -26,6 +26,7 @@ LinkLayerState machineState;
 LinkLayerRole role;
 int fd;
 
+
 // Alarm function handler
 void alarmHandler(int signal)
 {
@@ -120,7 +121,7 @@ int llopen(LinkLayer connectionParameters)
                             machineState = F;
                         break;
                     case F:
-                        if (byteRead == A_UA)
+                        if (byteRead == A_)
                             machineState = A;
                         break;
                     case A:
@@ -128,7 +129,7 @@ int llopen(LinkLayer connectionParameters)
                             machineState = C;
                         break;
                     case C:
-                        if (byteRead == (A_UA ^ C_UA))
+                        if (byteRead == (A_^ C_UA))
                             machineState = BCC1;
                         break;
                     case BCC1:
@@ -279,25 +280,20 @@ unsigned char computeBCC2(const unsigned char *buffer, int length, int startByte
 
 int llwrite(const unsigned char *buf, int bufSize)
 {
-    int totalSize = bufSize + 5; // tamanho total do frame
+    int totalSize = bufSize + 6; // tamanho total do frame, payload e 6 bytes adicionais
 
     unsigned char frame[totalSize]; // variavel para armazenar o frame antes do stuffing
 
     static int frameSequence = 0;
 
     frame[0] = FLAG;
-    frame[1] = A_T;                            // byte de endereço
+    frame[1] = A_ER;                            // byte de endereço
     frame[2] = C_INF(frameSequence);           // byte de controlo
-    frame[3] = BCC(A_T, C_INF(frameSequence)); // BCC calculado entre o A e o C
+    frame[3] = frame[1] ^ frame[2]; // BCC calculado entre o A e o C
 
     unsigned char calculatedBCC2 = buf[0];
 
-    for (int i = 0; i < bufSize; i++)
-    {
-        frame[i + 4] = buf[i];
-        if (i > 0)
-            calculatedBCC2 ^= buf[i]; // é usado o XOR novamente para calcular o BCC2
-    }
+    for(int i=1; i < bufSize; i++) calculatedBCC2 ^= buf[i];
 
     frame[bufSize + 4] = calculatedBCC2; // é inserido no final do frame
 
@@ -308,47 +304,47 @@ int llwrite(const unsigned char *buf, int bufSize)
     stuffedFrame[totalSize] = FLAG; // a flag assinala o fim do processo
     totalSize++;
 
-    // inicisalização das variaveis para controlar o alarme e state machine
+    // inicialização das variaveis para controlar o alarme e state machine
     STOP = FALSE;
     alarmFired = FALSE;
     alarmCount = 0;
-    machineState = START;
+    int attemptCounter = 0;
 
     // aqui contamos o nr de tentativas e temos rejected para ver se o frame é rejeitado ou nao
-    int attemptCount = 0;
-    int rejected = FALSE;
+    int failedTransmission = 0, successfulTransmission = 0;
 
-    while (!STOP && alarmCount < layer.nRetransmissions) // while até o stop ser true ou seja ate o frame ser aceite
+
+    while (attemptCounter < numberRetransmissions) // while até o stop ser true ou seja ate o frame ser aceite
     {
+        alarmFired = FALSE;
+        alarm(timeOut);
+        failedTransmission = 0;
+        successfulTransmission = 0;
 
-        // se o alarmenabled for false vai fazer uma tentativa de envio
-        if (!alarmEnabled)
-        {
-            attemptCount++;
-            bytes = write(fd, stuffedFrame, totalSize); // aqui enviamos ao usar o write
-            alarm(layer.timeout);
-            alarmEnabled = TRUE;
-            state = START; // start para iniciar a state machine
-        }
+        while(!failedTransmission && !successfulTransmission && !alarmFired) {
+            ssize_t bytesWritten = write(fd, frame, index);
+            auto result = getControlFrame(fd);
 
-        if ((frameSequence == 0 && response == REJ1) || (frameSequence == 1 && response == REJ0)) // verificamos se o frame foi ou nao rejeitado, se REJ1 entao rejected = true
-        {
-            rejected = TRUE;
-        }
+            if(result == 0) continue;
 
-        if (rejected) // se foi rejeitado desativa o alarme para tentar enviar outra vez
-        {
-            alarm(0);
-            alarmEnabled = FALSE;
+            else if(result == C_REJ(0) || result == C_REJ(1)) failedTransmission = 1;
+
+            else if(result == C_RR(0) || result == C_RR(1)) {
+                successfulTransmission = 1;
+                frameSequence++;
+                frameSequence %= 2; // para termos sempre index 0 ou 1 
+            }
         }
+        if (successfulTransmission) break;
+        attemptCounter++;
     }
 
-    frameSequence = (frameSequence + 1) % 2;
-
-    alarm(0); // alarme é desligado depois de ter conseguido enviar
+    if(!successfulTransmission) {
+        llclose(fd);
+        return -1;
+    }
 
     printf("Data Successfully Accepted!\n"); // debug
-
     return 0;
 }
 
@@ -414,7 +410,7 @@ int llread(unsigned char *buffer)
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
-int llclose(int showStatistics, int isTransmitter) {
+int llclose(int showStatistics) {
     machineState = START;
     unsigned char byteRead;
     (void)signal(SIGALRM, alarmHandler);
@@ -566,19 +562,19 @@ int llclose(int showStatistics, int isTransmitter) {
             break;
     }
 
-
+    // ainda não fiz isto 
     if (showStatistics) displayStatistics();
     return closeSerialPort();
 }
 
 
 
-LinkLayerState stateMachine(int isReceiver, int frameType)
+LinkLayerState stateMachine(int frameType)
 {
     switch (frameType)
     {
     case 1:
-        switch (isReceiver)
+        switch (role)
         {
         case 1:
             /* code */
@@ -590,7 +586,7 @@ LinkLayerState stateMachine(int isReceiver, int frameType)
         break;
 
     default:
-        switch (isReceiver)
+        switch (role)
         {
         case 1:
             break;
@@ -602,9 +598,16 @@ LinkLayerState stateMachine(int isReceiver, int frameType)
     }
 }
 
+
 sendSupervisionFrame(fd, A_byte, C_byte)
 {
     unsigned char sFrame[5] = {FLAG, A_byte, C_byte, A_byte ^ C_byte, FLAG};
 
     return write(fd, sFrame, 5);
+}
+
+
+// para acabar 
+void displayStatistics() {
+    printf("AQUI TENHO DE PRINTAR AS STATS");
 }
