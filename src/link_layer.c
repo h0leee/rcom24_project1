@@ -5,8 +5,19 @@
 
 #include "link_layer.h"
 #include "serial_port.h"
+#include "constants.h"
 
-#define A_RE = 0x01
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <termios.h>
+#include <unistd.h>
+#include <signal.h>
+#include <time.h>
+
 
 
 volatile int STOP = FALSE;
@@ -14,15 +25,6 @@ int alarmEnabled = FALSE;
 int alarmCount = 0;
 int timeOut = 0;
 int retransmissions = 0;
-
-
-
-
-
-
-
-
-
 
 
 
@@ -36,14 +38,9 @@ void alarmHandler(int signal)
 }
 
 
-int connection(const char *serialPort) {
+int makeConnection(const char *serialPort) {
 
-    int fd = connection(serialPort);
-    if (fd < 0) {
-        perror(serialPort);
-        return -1; 
-    }
-
+    int fd = openSerialPort(serialPort, 0_RDWR | 0_NOCTTY);
 
     struct termios oldtio;
     struct termios newtio;
@@ -84,16 +81,16 @@ int llopen(LinkLayer connectionParameters)
         return -1;
     }
 
-    // (Semelhante ao writenoncanonical.c)
+    int fd = makeConnection(connectionParameters.serialPort);
+    if (fd < 0) {
+        perror(connectionParameters.serialPort);
+        return -1; 
+    }
 
+    // (Semelhante ao writenoncanonical.c)
     //Abrimos a porta de série para leitura e escrita. 
 
-    int fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY);
 
-    if (fd < 0){
-        perror(connectionParameters.serialPort);
-        exit(-1);
-    }
     printf("New termio structure set\n");
 
     int alarmTriggered = FALSE;
@@ -112,32 +109,39 @@ int llopen(LinkLayer connectionParameters)
 
                     if(read(fd, &byteRead, 1) > 0) {
                         switch(machineState) {
+
                             case START:
                                 if (byteRead == FLAG) machineState = F;
                                 break;
                             
+                            // se estiver em F, quero receber o A
                             case F:
-                                if(byteRead == 0x01) machineState = A;
+                                if(byteRead == A_UA) machineState = A;
                                 break;
 
+                            // se estiver em A, quero o C byte 
                             case A:
-                                if(byteRead == C_RE) machineState = C;
+                                if(byteRead == C_UA) machineState = C;
                                 break;
 
+                            // se estiver em C, apenas me interessa receber o XOR (bcc1)
                             case C:
-                                if(byteRead == BCC1) machineState = BCC1;
+                                if(byteRead == (A_UA ^ C_UA)) machineState = BCC1;
                                 break;
 
+                            // se estiver em BCC1, se receber a flag está top, caso contrário volta ao início
                             case BCC1:
-                                if(byteRead == FLAG) machineState = STO;
+                                if(byteRead == FLAG) machineState = STOP; 
+                                else machineState = START;
                                 break;
 
                             default:
                                 break;
                         }
                     }
-
                 }
+                
+                connectionParameters.nRetransmissions = connectionParameters.nRetransmissions - 1;
                 break; // Adicionado break para evitar fall-through
         }
 
