@@ -5,14 +5,12 @@
 #define BAUDRATE 38400
 #define FLAG 0x7E
 #define ESC 0x7D
-#define A_SET 0x03
+#define A_ER 0x03
 #define A_UA 0x01
 #define C_SET 0x03
 #define C_DISC 0x0B
 #define C_UA 0x07
-#define C_RR(Nr) ((Nr << 7) | 0x05)
-#define C_REJ(Nr) ((Nr << 7) | 0x01)
-#define C_N(Ns) (Ns << 6)
+
 
 typedef enum {
     START, 
@@ -27,5 +25,7 @@ typedef enum {
 
 
 LinkLayerState stateMachine(bool isReceiver, int frameType);
+
+int sendSupervisionFrame(int fd, unsigned char A_byte, unsigned char C_byte) {}
 
 #endif 

@@ -1,7 +1,6 @@
 // Link layer protocol implementation
 
-
-// depois poderei tentar modular o código da stateMachine 
+// depois poderei tentar modular o código da stateMachine
 
 #include "link_layer.h"
 #include "serial_port.h"
@@ -18,15 +17,11 @@
 #include <signal.h>
 #include <time.h>
 
-
-
 volatile int STOP = FALSE;
 int alarmEnabled = FALSE;
 int alarmCount = 0;
+int numberRetransmissions = 0;
 int timeOut = 0;
-int retransmissions = 0;
-
-
 
 // Alarm function handler
 void alarmHandler(int signal)
@@ -37,8 +32,8 @@ void alarmHandler(int signal)
     printf("Alarm #%d\n", alarmCount);
 }
 
-
-int makeConnection(const char *serialPort) {
+int makeConnection(const char *serialPort)
+{
 
     int fd = openSerialPort(serialPort, 0_RDWR | 0_NOCTTY);
 
@@ -62,7 +57,8 @@ int makeConnection(const char *serialPort) {
 
     tcflush(fd, TCIOFLUSH);
 
-    if (tcsetattr(fd, TCSANOW, &newtio) == -1) {
+    if (tcsetattr(fd, TCSANOW, &newtio) == -1)
+    {
         perror("tcsetattr");
         return -1;
     }
@@ -70,132 +66,140 @@ int makeConnection(const char *serialPort) {
     return fd;
 }
 
-
 ////////////////////////////////////////////////
 // LLOPEN
 ////////////////////////////////////////////////
-int llopen(LinkLayer connectionParameters)
-{
-    if (openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate) < 0)
-    {
+int llopen(LinkLayer connectionParameters) {
+    // Abrir porta serial e verificar erro
+    if (openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate) < 0) {
         return -1;
     }
 
     int fd = makeConnection(connectionParameters.serialPort);
     if (fd < 0) {
         perror(connectionParameters.serialPort);
-        return -1; 
+        return -1;
     }
-
-    // (Semelhante ao writenoncanonical.c)
-    //Abrimos a porta de série para leitura e escrita. 
-
 
     printf("New termio structure set\n");
 
     int alarmTriggered = FALSE;
     LinkLayerState machineState = START;
-    sleep(1); // O sleep espera até que todos os bytes tenham sido escritos
     unsigned char byteRead;
-    int timeOut = connectionParameters.timeout;
-    int retransmissions = connectionParameters.nRetransmissions;
+    timeOut = connectionParameters.timeout;
+    numberRetransmissions = connectionParameters.nRetransmissions; // Usar uma cópia local para preservar o valor original
 
     switch (connectionParameters.role) {
-        case LlTx: {
-                // Quando o sinal SIGALRM for acionado, a função alarmHandler será chamada.
-                (void) signal(SIGALRM, alarmHandler); 
+    case LlTx:
+        (void)signal(SIGALRM, alarmHandler);
 
-                while (machineState != STOP && !alarmTriggered) {
+        int retransmissions = numberRetransmissions;
 
-                    if(read(fd, &byteRead, 1) > 0) {
-                        switch(machineState) {
+        while (retransmissions > 0 && machineState != STOP) {
+            sendSupervisionFrame(fd, A_ER, C_SET);
+            alarm(timeOut);
+            alarmTriggered = FALSE;
 
-                            case START:
-                                if (byteRead == FLAG) machineState = F;
-                                break;
-                            
-                            // se estiver em F, quero receber o A
-                            case F:
-                                if(byteRead == A_UA) machineState = A;
-                                break;
-
-                            // se estiver em A, quero o C byte 
-                            case A:
-                                if(byteRead == C_UA) machineState = C;
-                                break;
-
-                            // se estiver em C, apenas me interessa receber o XOR (bcc1)
-                            case C:
-                                if(byteRead == (A_UA ^ C_UA)) machineState = BCC1;
-                                break;
-
-                            // se estiver em BCC1, se receber a flag está top, caso contrário volta ao início
-                            case BCC1:
-                                if(byteRead == FLAG) machineState = STOP; 
-                                else machineState = START;
-                                break;
-
-                            default:
-                                break;
-                        }
+            while (machineState != STOP && !alarmTriggered) {
+                if (read(fd, &byteRead, 1) > 0) {
+                    switch (machineState) {
+                    case START:
+                        if (byteRead == FLAG) machineState = F;
+                        break;
+                    case F:
+                        if (byteRead == A_UA) machineState = A;
+                        break;
+                    case A:
+                        if (byteRead == C_UA) machineState = C;
+                        break;
+                    case C:
+                        if (byteRead == (A_UA ^ C_UA)) machineState = BCC1;
+                        break;
+                    case BCC1:
+                        if (byteRead == FLAG) machineState = STOP;
+                        else machineState = START;
+                        break;
+                    default:
+                        break;
                     }
                 }
-                
-                connectionParameters.nRetransmissions = connectionParameters.nRetransmissions - 1;
-                break; // Adicionado break para evitar fall-through
-        }
+            }
 
-        
-        case LlRx: {
-            // Implementação para LlRx
-            break; // Adicionado break para evitar fall-through
+            retransmissions--; // Reduz o número de retransmissões
         }
+        if (machineState != STOP) return -1;
+        break;
+
+    case LlRx:
+        while (machineState != STOP) {
+            if (read(fd, &byteRead, 1) > 0) { // Corrigido o parêntesis aqui
+                switch (machineState) {
+                case START:
+                    if (byteRead == FLAG) machineState = F;
+                    break;
+                case F:
+                    if (byteRead == A_ER) machineState = A;
+                    break;
+                case A:
+                    if (byteRead == C_SET) machineState = C;
+                    break;
+                case C:
+                    if (byteRead == (A_ER ^ C_SET)) machineState = BCC1;
+                    break;
+                case BCC1:
+                    if (byteRead == FLAG) machineState = STOP;
+                    else machineState = START;
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+        sendSupervisionFrame(fd, A_UA, C_UA); // Enviar quadro de supervisão de resposta
+        break;
+
+    default:
+        return -1;
     }
 
-    return 0;
+    return fd; // Retorna o descritor de arquivo da conexão bem-sucedida
 }
 
 
-
-
-
 /////////////////////////////////////////////////////
-//STUFFING
+// STUFFING
 /////////////////////////////////////////////////////
 
-//Stuffing e o processo inverso vao ser usados no LLWRITE
+// Stuffing e o processo inverso vao ser usados no LLWRITE
 
 int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *outputMsg)
 {
-    int stuffedSize = 0; //Variável para guardar o tamanho da mensagem (quantos bytes foram escritos em outputMsg)
+    int stuffedSize = 0; // Variável para guardar o tamanho da mensagem (quantos bytes foram escritos em outputMsg)
 
-    outputMsg[stuffedSize++] = inputMsg[0]; //o stuffedSize serve como indice para avançar para a próxima posição
+    outputMsg[stuffedSize++] = inputMsg[0]; // o stuffedSize serve como indice para avançar para a próxima posição
 
-    printf("\nSTUFFING STARTED\n"); //debug
+    printf("\nSTUFFING STARTED\n"); // debug
 
-    printf("%x\n", outputMsg[stuffedSize - 1]); 
+    printf("%x\n", outputMsg[stuffedSize - 1]);
 
     for (int i = 1; i < inputSize; i++)
     {
-        if (inputMsg[i] == FLAG || inputMsg[i] == ESCAPE) //bytes de controlo, se for igual é necessário stuffing
+        if (inputMsg[i] == FLAG || inputMsg[i] == ESCAPE) // bytes de controlo, se for igual é necessário stuffing
         {
-            outputMsg[stuffedSize++] = ESCAPE; //indica que o próximo byte foi modificado
-            outputMsg[stuffedSize++] = inputMsg[i] ^ 0x20; 
-
+            outputMsg[stuffedSize++] = ESCAPE; // indica que o próximo byte foi modificado
+            outputMsg[stuffedSize++] = inputMsg[i] ^ 0x20;
         }
         else
         {
-            //se não for FLAG ou ESCAPE vai copiar o byte logo
+            // se não for FLAG ou ESCAPE vai copiar o byte logo
             outputMsg[stuffedSize++] = inputMsg[i];
-
         }
     }
 
-    printf("\nSTUFFING COMPLETED\n"); //debug
+    printf("\nSTUFFING COMPLETED\n"); // debug
 
     return stuffedSize;
 }
-
 
 // função usada para reverter o byte stuffing aplicado na mensagem
 
@@ -205,7 +209,7 @@ int byteDestuffing(const unsigned char *stuffedMsg, int stuffedSize, unsigned ch
 
     printf("\nDESTUFFING STARTED\n"); // debug
 
-    originalMsg[destuffedSize++] = stuffedMsg[0]; 
+    originalMsg[destuffedSize++] = stuffedMsg[0];
 
     for (int i = 1; i < stuffedSize; i++)
     {
@@ -225,7 +229,6 @@ int byteDestuffing(const unsigned char *stuffedMsg, int stuffedSize, unsigned ch
     return destuffedSize;
 }
 
-
 // BCC -> block check character
 
 unsigned char computeBCC2(const unsigned char *buffer, int length, int startByte)
@@ -243,12 +246,6 @@ unsigned char computeBCC2(const unsigned char *buffer, int length, int startByte
     return BCC2Value;
 }
 
-
-
-
-
-
-
 ////////////////////////////////////////////////
 // LLWRITE
 ////////////////////////////////////////////////
@@ -259,14 +256,14 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     unsigned char frame[totalSize]; // variavel para armazenar o frame antes do stuffing
 
-    static int frameSequence = 0; 
+    static int frameSequence = 0;
 
     frame[0] = FLAG;
-    frame[1] = A_T; // byte de endereço
-    frame[2] = C_INF(frameSequence); // byte de controlo
+    frame[1] = A_T;                            // byte de endereço
+    frame[2] = C_INF(frameSequence);           // byte de controlo
     frame[3] = BCC(A_T, C_INF(frameSequence)); // BCC calculado entre o A e o C
 
-    unsigned char calculatedBCC2 = buf[0]; 
+    unsigned char calculatedBCC2 = buf[0];
 
     for (int i = 0; i < bufSize; i++)
     {
@@ -280,13 +277,12 @@ int llwrite(const unsigned char *buf, int bufSize)
     unsigned char stuffedFrame[totalSize * 2]; // vai armazenar o frame depois do stuffing
 
     // aqui vamos aplicar o stuffing ao frame e copiamos para o stuffedframe
-    totalSize = byteStuffing(frame, totalSize, stuffedFrame); 
+    totalSize = byteStuffing(frame, totalSize, stuffedFrame);
     stuffedFrame[totalSize] = FLAG; // a flag assinala o fim do processo
     totalSize++;
 
-
-    //inicisalização das variaveis para controlar o alarme e state machine
-    STOP = FALSE; 
+    // inicisalização das variaveis para controlar o alarme e state machine
+    STOP = FALSE;
     alarmEnabled = FALSE;
     alarmCount = 0;
     state = START;
@@ -295,12 +291,11 @@ int llwrite(const unsigned char *buf, int bufSize)
     int attemptCount = 0;
     int rejected = FALSE;
 
-
     while (!STOP && alarmCount < layer.nRetransmissions) // while até o stop ser true ou seja ate o frame ser aceite
     {
 
         // se o alarmenabled for false vai fazer uma tentativa de envio
-        if (!alarmEnabled) 
+        if (!alarmEnabled)
         {
             attemptCount++;
             bytes = write(fd, stuffedFrame, totalSize); // aqui enviamos ao usar o write
@@ -309,7 +304,6 @@ int llwrite(const unsigned char *buf, int bufSize)
             state = START; // start para iniciar a state machine
         }
 
-        stateMachine(A_T, NULL, 0, 1); // chamamos a state machine de cima
 
         if ((frameSequence == 0 && response == REJ1) || (frameSequence == 1 && response == REJ0)) // verificamos se o frame foi ou nao rejeitado, se REJ1 entao rejected = true
         {
@@ -325,19 +319,12 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     frameSequence = (frameSequence + 1) % 2;
 
-    alarm(0); //alarme é desligado depois de ter conseguido enviar
+    alarm(0); // alarme é desligado depois de ter conseguido enviar
 
-    printf("Data Successfully Accepted!\n"); //debug
+    printf("Data Successfully Accepted!\n"); // debug
 
     return 0;
 }
-
-
-
-
-
-
-
 
 ////////////////////////////////////////////////
 // LLREAD
@@ -346,9 +333,9 @@ int llread(unsigned char *buffer)
 {
     int bytesread = 0; // vai contar o numero de bytes lidos do frame recebido
 
-    static int packet = 0; 
+    static int packet = 0;
 
-    unsigned char stuffedMsg[MAX_BUFFER_SIZE]; // vai armazenar o frame com byte stuffing
+    unsigned char stuffedMsg[MAX_BUFFER_SIZE];       // vai armazenar o frame com byte stuffing
     unsigned char unstuffedMsg[MAX_PACKET_SIZE + 7]; // vai armazenar o frame depouis do byte destuffing
 
     STOP = FALSE;
@@ -369,19 +356,19 @@ int llread(unsigned char *buffer)
 
     int s = destuffing(stuffedMsg, bytesread, unstuffedMsg); // destuffing e guardamos o tamanho total da mensagem em s
 
-    unsigned char receivedBCC2 = unstuffedMsg[s - 2]; 
+    unsigned char receivedBCC2 = unstuffedMsg[s - 2];
 
     unsigned char expectedBCC2 = calculateBCC2(unstuffedMsg, s - 2, 4);
 
-    if (receivedBCC2 == expectedBCC2 && unstuffedMsg[2] == C_INF(packet)) // verificamos se o recebido era o que era esperado e se o bytre de controlo esta correto 
+    if (receivedBCC2 == expectedBCC2 && unstuffedMsg[2] == C_INF(packet)) // verificamos se o recebido era o que era esperado e se o bytre de controlo esta correto
     {
         packet = (packet + 1) % 2;
-        sendBuffer(A_T, RR(packet)); //RR é uma mensagem para confirmar que o frame foi recebido
+        sendBuffer(A_T, RR(packet));             // RR é uma mensagem para confirmar que o frame foi recebido
         memcpy(buffer, &unstuffedMsg[4], s - 5); // é feita uma copia para o buffer
         return s - 5;
     }
 
-    //este else usamos para descartar frame duplicado mas confirmamos na mesma a receção com o RR
+    // este else usamos para descartar frame duplicado mas confirmamos na mesma a receção com o RR
     else if (receivedBCC2 == expectedBCC2)
     {
         sendBuffer(A_T, RR(packet));
@@ -392,10 +379,36 @@ int llread(unsigned char *buffer)
     else
     {
         sendBuffer(A_T, REJ(packet));
-        tcflush(fd, TCIFLUSH); //limpamos na mesma o buffer
+        tcflush(fd, TCIFLUSH); // limpamos na mesma o buffer
         printf("Error in BCC2, sent REJ\n");
     }
     return -1;
+}
+
+////////////////////////////////////////////////
+// LLCLOSE
+////////////////////////////////////////////////
+int llclose(int showStatistics)
+{
+    LinkLayerState machineState = START;
+    unsigned char byteRead;
+    (void) signal(SIGALRM, alarmHandler);
+
+    int retransmissions = numberRetransmissions; // Usar uma cópia local para preservar o valor original
+
+    while(machineState != STOP && retransmissions > 0) {
+
+        sendSupervisionFrame(fd, A_ER, C_DISC);
+        alarm(timeout);
+    }
+
+
+    if(showStatistics) {
+        displayStatistics(); 
+    }
+
+    int clstat = closeSerialPort();
+    return clstat;
 }
 
 
@@ -407,13 +420,41 @@ int llread(unsigned char *buffer)
 
 
 
-////////////////////////////////////////////////
-// LLCLOSE
-////////////////////////////////////////////////
-int llclose(int showStatistics)
-{
-    // TODO
 
-    int clstat = closeSerialPort();
-    return clstat;
+
+
+LinkLayerState stateMachine(int isReceiver, int frameType) {
+    switch (frameType)
+    {
+    case 1:
+        switch (isReceiver)
+        {
+        case 1:
+            /* code */
+            break;
+        
+        default:
+            break;
+        }
+        break;
+    
+    default:
+        switch (isReceiver)
+        {
+        case 1:
+            break;
+        
+        default:
+            break;
+        }
+        break;
+    }
+}
+
+
+sendSupervisionFrame(fd, A_byte, C_byte)
+{
+    unsigned char sFrame[5] = {FLAG, A_byte, C_byte, A_byte ^ C_byte, FLAG};
+
+    return write(fd, sFrame, 5);
 }
