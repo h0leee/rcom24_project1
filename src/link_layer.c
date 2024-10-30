@@ -108,7 +108,7 @@ int llopen(LinkLayer connectionParameters)
 
             while (machineState != STOP && !alarmFired)
             {
-                if (read(fd, &byteRead, 1) > 0)
+                if (readByteSerialPort(&byteRead) > 0)
                 {
                     switch (machineState)
                     {
@@ -149,7 +149,7 @@ int llopen(LinkLayer connectionParameters)
     case LlRx:
         while (machineState != STOP)
         {
-            if (read(fd, &byteRead, 1) > 0)
+            if (readByteSerialPort(&byteRead) > 0)
             { // Corrigido o parêntesis aqui
                 switch (machineState)
                 {
@@ -270,7 +270,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     // frame sem qualquer FLAG
     
     frame[0] = A_ER;
-    frame[1] = C_INF(txFrame);
+    frame[1] = C_N(txFrame);
     frame[2] = frame[0] ^ frame[1]; // BCC1
     memcpy(&frame[3], buf, bufSize);
     frame[3 + bufSize] = computeBCC2(buf, bufSize); // BCC2
@@ -302,7 +302,7 @@ int llwrite(const unsigned char *buf, int bufSize)
         failedTransmission = 0;
         successfulTransmission = 0;
 
-        ssize_t bytesWritten = write(fd, stuffedFrame, totalSize);
+        auto bytesWritten = writeBytesSerialPort(stuffedFrame, totalSize);
         if (bytesWritten < 0)
         {
             perror("Erro ao escrever o frame");
@@ -353,7 +353,7 @@ int llread(unsigned char *packet)
 
     while (1)
     {
-        if (read(fd, &byteRead, 1) > 0)
+        if (readByteSerialPort(&byteRead) > 0)
         {
             switch (machineState)
             {
@@ -530,7 +530,7 @@ int llclose(int showStatistics)
             machineState = START;
             while (!alarmFired && machineState != STOP)
             {
-                if (read(fd, &byteRead, 1) > 0)
+                if (readByteSerialPort(&byteRead) > 0)
                 {
                     switch (machineState)
                     {
@@ -594,7 +594,7 @@ int llclose(int showStatistics)
 
             while (!alarmFired && machineState != STOP)
             {
-                if (read(fd, &byteRead, 1) > 0)
+                if (readByteSerialPort(&byteRead) > 0)
                 {
                     switch (machineState)
                     {
@@ -651,7 +651,7 @@ int llclose(int showStatistics)
         machineState = START;
         while (machineState != STOP && retransmissions > 0)
         {
-            if (read(fd, &byteRead, 1) > 0)
+            if (readByteSerialPort(&byteRead) > 0)
             {
                 switch (machineState)
                 {
@@ -743,7 +743,7 @@ int sendSupervisionFrame(int fd, unsigned char A_byte, unsigned char C_byte)
     unsigned char sFrame[5] = {FLAG, A_byte, C_byte, A_byte ^ C_byte, FLAG};
     
     // isto parece estar mesmo mal 
-    return write(fd, sFrame, 5);
+    return writeBytesSerialPort(sFrame, 5);
 }
 
 
@@ -757,7 +757,8 @@ unsigned char getControlFrame(int fd)
 
     while (machineState != STOP)
     {
-        if (read(fd, &byteRead, 1) > 0)
+        // será que tenho de colcoar uma condição para quando retorna 0 bytes escritos?
+        if (readByteSerialPort(&byteRead) > 0)
         {
             switch (machineState)
             {
