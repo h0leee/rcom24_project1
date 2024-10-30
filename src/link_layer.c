@@ -76,11 +76,6 @@ int makeConnection(LinkLayer *connectionParameters)
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
-    // Abrir porta serial e verificar erro
-    if (openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate) < 0)
-    {
-        return -1;
-    }
 
     int fd = makeConnection(&connectionParameters);
     if (fd < 0)
@@ -91,7 +86,6 @@ int llopen(LinkLayer connectionParameters)
 
     printf("New termio structure set\n");
 
-    int alarmTriggered = FALSE;
     machineState = START;
     unsigned char byteRead;
     timeOut = connectionParameters.timeout;
@@ -110,9 +104,9 @@ int llopen(LinkLayer connectionParameters)
 
             sendSupervisionFrame(fd, A_ER, C_SET);
             alarm(timeOut);
-            alarmTriggered = FALSE;
+            alarmFired = FALSE;
 
-            while (machineState != STOP && !alarmTriggered)
+            while (machineState != STOP && !alarmFired)
             {
                 if (read(fd, &byteRead, 1) > 0)
                 {
@@ -245,18 +239,22 @@ int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *ou
 
 
 
-unsigned char computeBCC2(const unsigned char *buffer, int length, int startByte)
+unsigned char computeBCC2(const unsigned char *buffer, size_t length)
 {
-    if (length < 0) // se o tamanho do buffer for negativo como é obvio retornará erro mas sem interromper a execução
+    if (buffer == NULL || length == 0)
     {
-        printf("Error: Buffer size is %d\n", length);
+        printf("Error: Invalid buffer parameters in computeBCC2.\n");
+        return 0xFF; // Valor especial para indicar erro
     }
-    unsigned char BCC2Value = 0x00; // inicializamos a zero para fazer o XOR
 
-    for (unsigned int i = startByte; i < length; i++) // este loop vaipercorrer o buffer
+    unsigned char BCC2Value = 0x00;
+
+    // Inicia o cálculo do BCC2 no índice 0
+    for (size_t i = 0; i < length; i++)
     {
-        BCC2Value ^= buffer[i]; // ^= é o XOR que é aplicado ao BCC2
+        BCC2Value ^= buffer[i];
     }
+
     return BCC2Value;
 }
 
@@ -269,23 +267,26 @@ int llwrite(const unsigned char *buf, int bufSize)
     int totalSize = bufSize + 6;    // tamanho total do frame, payload e 6 bytes adicionais
     unsigned char frame[totalSize]; // variável para armazenar o frame antes do stuffing
 
-    frame[0] = FLAG;
-    frame[1] = A_ER;                 // byte de endereço
-    frame[2] = C_INF(txFrame); // byte de controlo
-    frame[3] = frame[1] ^ frame[2];  // BCC calculado entre o A e o C
+    // frame sem qualquer FLAG
+    
+    frame[0] = A_ER;
+    frame[1] = C_INF(txFrame);
+    frame[2] = frame[0] ^ frame[1]; // BCC1
+    memcpy(&frame[3], buf, bufSize);
+    frame[3 + bufSize] = computeBCC2(buf, bufSize); // BCC2
 
-    unsigned char calculatedBCC2 = buf[0];
-    for (int i = 1; i < bufSize; i++)
-        calculatedBCC2 ^= buf[i];
+    // Aplicar byte stuffing ao campo de dados e BCC2
+    int frameSize = 4 + bufSize; // A_ER + C + BCC1 + Dados + BCC2
+    unsigned char stuffedFrame[MAX_PAYLOAD_SIZE];
+    int stuffedSize = byteStuffing(frame, frameSize, stuffedFrame);
 
-    // Copiar o buffer de dados, a partir do index 4, para o frame
-    memcpy(&frame[4], buf, bufSize);
-    frame[bufSize + 4] = calculatedBCC2; // BCC2 inserido no final do frame
+    // Agora adicionar as FLAGs
+    unsigned char finalFrame[MAX_PAYLOAD_SIZE];
+    finalFrame[0] = FLAG;
+    memcpy(&finalFrame[1], stuffedFrame, stuffedSize);
+    finalFrame[stuffedSize + 1] = FLAG;
+    int totalSize = stuffedSize + 2; // FLAGS adicionadas
 
-    unsigned char stuffedFrame[totalSize * 2]; // vai armazenar o frame depois do stuffing
-    totalSize = byteStuffing(frame, totalSize, stuffedFrame);
-    stuffedFrame[totalSize] = FLAG; // FLAG para o final do frame
-    totalSize++;
 
     STOP = FALSE;
     alarmFired = FALSE;
@@ -346,13 +347,15 @@ int llwrite(const unsigned char *buf, int bufSize)
 int llread(unsigned char *packet)
 {
     unsigned char byteRead, cByte;
-    LinkLayerState machineState = START; // Estado inicial da máquina de estados
+    LinkLayerState machineState = START;
     int frameIndex = 0;
+    unsigned char bcc2;
 
-    while (machineState != STOP) { // Lê bytes até que o frame completo seja recebido
+    while (1)
+    {
         if (read(fd, &byteRead, 1) > 0)
         {
-            switch(machineState)
+            switch (machineState)
             {
                 case START:
                     if (byteRead == FLAG)
@@ -364,7 +367,7 @@ int llread(unsigned char *packet)
                         machineState = A;
                     else if (byteRead != FLAG)
                         machineState = START;
-                    // Se byteRead == FLAG, permanece no estado F (pode ser início de uma nova trama)
+                    // Se byteRead == FLAG, permanece no estado F
                     break;
 
                 case A:
@@ -373,9 +376,10 @@ int llread(unsigned char *packet)
                         machineState = C;
                         cByte = byteRead;
                     }
-                    else if(byteRead == FLAG)
+                    else if (byteRead == FLAG)
                         machineState = F;
-                    else if(byteRead == C_DISC) {
+                    else if (byteRead == C_DISC)
+                    {
                         sendSupervisionFrame(fd, A_RE, C_DISC);
                         return 0; // Indica desconexão
                     }
@@ -393,71 +397,113 @@ int llread(unsigned char *packet)
                     break;
 
                 case BCC1:
-                    if(byteRead == ESC)
-                        machineState = ESC_FOUND;
-
-                    else if(byteRead == FLAG) {
-                        if(frameIndex <= 0){
-
-                            // Nenhum dado recebido antes da FLAG, frame inválido
-                            machineState = START;
-                            break;
-                        }
-
-                        unsigned char bcc2 = packet[frameIndex-1];
-                        frameIndex--;
-
-                        unsigned char acc = 0;
-
-                        // Calcula BCC2 a partir do payload 
-                        for(int i = 0; i < frameIndex; i++)
-                            acc ^= packet[i];
-
-                        if(acc == bcc2){
-                            machineState = STOP;
-                            sendSupervisionFrame(fd, A_RE, C_RR(rxFrame));
-                            rxFrame = (rxFrame + 1) % 2;
-                            return frameIndex; // Retorna o número de bytes de dados recebidos
-                        }
-                        else{
-                            printf("Erro: retransmissão necessária.\n");
-                            sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
-                            return -1; // Indica erro na receção
-                        }
+                    if (byteRead == FLAG)
+                    {
+                        // Frame inválido, no data
+                        machineState = START;
+                        frameIndex = 0;
                     }
-                    else {
-                        if(frameIndex < MAX_PAYLOAD_SIZE){
+                    else if (byteRead == ESC)
+                    {
+                        machineState = ESC_FOUND;
+                    }
+                    else
+                    {
+                        // Armazena o byte de dados
+                        if (frameIndex < MAX_PAYLOAD_SIZE)
+                        {
                             packet[frameIndex++] = byteRead;
                         }
-                        else{
+                        else
+                        {
                             printf("Erro: buffer de pacote excedido.\n");
-                            machineState = START; // Reinicia a máquina de estados
+                            machineState = START;
+                            frameIndex = 0;
                         }
                     }
                     break;
 
                 case ESC_FOUND:
-                    machineState = BCC1; // para continuar a ler payload 
+                    machineState = BCC1; // Retorna ao estado BCC1 após tratar o escape
 
-                    if (byteRead == 0x5E) { // Representa FLAG original
-                        packet[frameIndex++] = FLAG;
+                    if (byteRead == 0x5E) // FLAG escapado
+                    {
+                        if (frameIndex < MAX_PAYLOAD_SIZE)
+                        {
+                            packet[frameIndex++] = FLAG;
+                        }
+                        else
+                        {
+                            printf("Erro: buffer de pacote excedido.\n");
+                            machineState = START;
+                            frameIndex = 0;
+                        }
                     }
-                    else if (byteRead == 0x5D) { // Representa ESC original
-                        packet[frameIndex++] = ESC;
+                    else if (byteRead == 0x5D) // ESC escapado
+                    {
+                        if (frameIndex < MAX_PAYLOAD_SIZE)
+                        {
+                            packet[frameIndex++] = ESC;
+                        }
+                        else
+                        {
+                            printf("Erro: buffer de pacote excedido.\n");
+                            machineState = START;
+                            frameIndex = 0;
+                        }
                     }
-                    else{
+                    else
+                    {
                         printf("Erro: sequência de escape inválida.\n");
-                        machineState = START; 
+                        machineState = START;
+                        frameIndex = 0;
                     }
                     break;
 
-                default: 
-                    machineState = START; // não se conhece o estado, reinicia 
+                default:
+                    machineState = START;
+                    frameIndex = 0;
                     break;
+            }
+
+            // Verifica se a FLAG final foi recebida no estado BCC1
+            if (machineState == BCC1 && byteRead == FLAG)
+            {
+                // Recebeu FLAG final
+                if (frameIndex < 1)
+                {
+                    printf("Erro: Nenhum dado recebido antes da FLAG final.\n");
+                    machineState = START;
+                    frameIndex = 0;
+                    continue;
+                }
+
+                // O último byte recebido é o BCC2
+                bcc2 = packet[frameIndex - 1];
+                frameIndex--; // Exclui o BCC2 dos dados
+
+                // Calcula o BCC2 dos dados recebidos
+                unsigned char calculatedBCC2 = computeBCC2(packet, frameIndex);
+
+                if (calculatedBCC2 == bcc2)
+                {
+                    sendSupervisionFrame(fd, A_RE, C_RR(rxFrame));
+                    rxFrame = (rxFrame + 1) % 2;
+                    return frameIndex; // Retorna o número de bytes de dados recebidos
+                }
+                else
+                {
+                    printf("Erro: BCC2 inválido. Necessária retransmissão.\n");
+                    sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
+                    machineState = START;
+                    frameIndex = 0;
+                    continue;
+                }
             }
         }
     }
-    return -1; // erro caso o loop termine sem receber STOP
+
+    return -1; // Erro caso o loop termine sem receber a FLAG final
 }
 
 ////////////////////////////////////////////////
@@ -692,16 +738,78 @@ LinkLayerState stateMachine(int frameType)
     }
 }
 
-sendSupervisionFrame(fd, A_byte, C_byte)
+int sendSupervisionFrame(int fd, unsigned char A_byte, unsigned char C_byte)
 {
     unsigned char sFrame[5] = {FLAG, A_byte, C_byte, A_byte ^ C_byte, FLAG};
+    
+    // isto parece estar mesmo mal 
     return write(fd, sFrame, 5);
 }
 
+
+
+// ela pode estar mal
 unsigned char getControlFrame(int fd)
 {
-    // to do
+    unsigned char byteRead;
+    LinkLayerState machineState = START;
+    unsigned char controlByte = 0;
+
+    while (machineState != STOP)
+    {
+        if (read(fd, &byteRead, 1) > 0)
+        {
+            switch (machineState)
+            {
+            case START:
+                if (byteRead == FLAG)
+                    machineState = F;
+                break;
+
+            case F:
+                if (byteRead == A_RE)
+                    machineState = A;
+                else if (byteRead != FLAG)
+                    machineState = START;
+                break;
+
+            case A:
+                if (byteRead == C_RR(0) || byteRead == C_RR(1) || byteRead == C_REJ(0) || byteRead == C_REJ(1))
+                {
+                    controlByte = byteRead;
+                    machineState = C;
+                }
+                else if (byteRead == FLAG)
+                    machineState = F;
+                else
+                    machineState = START;
+                break;
+
+            case C:
+                if (byteRead == (A_RE ^ controlByte))
+                    machineState = BCC1;
+                else if (byteRead == FLAG)
+                    machineState = F;
+                else
+                    machineState = START;
+                break;
+
+            case BCC1:
+                if (byteRead == FLAG)
+                    machineState = STOP;
+                else
+                    machineState = START;
+                break;
+
+            default:
+                machineState = START;
+                break;
+            }
+        }
+    }
+    return controlByte;
 }
+
 
 // to do
 void displayStatistics()
