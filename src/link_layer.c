@@ -243,33 +243,7 @@ int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *ou
 
 // função usada para reverter o byte stuffing aplicado na mensagem
 
-int byteDestuffing(const unsigned char *stuffedMsg, int stuffedSize, unsigned char *originalMsg)
-{
-    int destuffedSize = 0; // vai contar quantos bytes sao escritos
 
-    printf("\nDESTUFFING STARTED\n"); // debug
-
-    originalMsg[destuffedSize++] = stuffedMsg[0];
-
-    for (int i = 1; i < stuffedSize; i++)
-    {
-        if (stuffedMsg[i] == ESC) // vemos se o byte foi mudificado com stuffing para saber se temos de restaurar
-        {
-            originalMsg[destuffedSize++] = stuffedMsg[i + 1] ^ 0x20; // byte é restaurado e incrementamos para a posição seguinte
-            i++;
-        }
-        else
-        {
-            originalMsg[destuffedSize++] = stuffedMsg[i]; // se nao for ESCAPE copia logo
-        }
-    }
-
-    printf("\nDESTUFFING COMPLETED\n"); // debug
-
-    return destuffedSize;
-}
-
-// BCC -> block check character
 
 unsigned char computeBCC2(const unsigned char *buffer, int length, int startByte)
 {
