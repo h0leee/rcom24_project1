@@ -229,7 +229,6 @@ int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *ou
         }
     }
 
-
     // Opcional: Adicionar um terminador nulo se necessário
     // if (stuffedSize < maxOutputSize) {
     //     outputMsg[stuffedSize] = '\0';
@@ -453,7 +452,7 @@ int llread(unsigned char *packet)
                         }
                     }
                     else {
-                        if(frameIndex < maxp){
+                        if(frameIndex < MAX_PAYLOAD_SIZE){
                             packet[frameIndex++] = byteRead;
                         }
                         else{
