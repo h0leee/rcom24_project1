@@ -32,4 +32,6 @@ void displayStatistics();
 
 unsigned char getControlFrame(int fd);
 
+int byteStuffing(const unsigned char* inputMsg, int inputSize, unsigned char* outputMessage);
+
 #endif 

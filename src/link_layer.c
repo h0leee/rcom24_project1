@@ -204,32 +204,43 @@ int llopen(LinkLayer connectionParameters)
 
 int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *outputMsg)
 {
-    int stuffedSize = 0; // Variável para guardar o tamanho da mensagem (quantos bytes foram escritos em outputMsg)
+    int stuffedSize = 0; 
 
-    outputMsg[stuffedSize++] = inputMsg[0]; // o stuffedSize serve como indice para avançar para a próxima posição
-
-    printf("\nSTUFFING STARTED\n"); // debug
+    printf("\nSTUFFING STARTED\n"); // só para debug
 
     printf("%x\n", outputMsg[stuffedSize - 1]);
 
-    for (int i = 1; i < inputSize; i++)
+    for (int i = 0; i < inputSize; i++)
     {
         if (inputMsg[i] == FLAG || inputMsg[i] == ESC) // bytes de controlo, se for igual é necessário stuffing
         {
-            outputMsg[stuffedSize++] = ESC; // indica que o próximo byte foi modificado
+            if(stuffedSize + 2 > MAX_PAYLOAD_SIZE) {
+                printf("Buffer de saída excedido a fazer byte stuffing\n");
+            }
+
+            outputMsg[stuffedSize++] = ESC; 
             outputMsg[stuffedSize++] = inputMsg[i] ^ 0x20;
         }
-        else
-        {
-            // se não for FLAG ou ESCAPE vai copiar o byte logo
+        else {
+            if(stuffedSize + 1 > MAX_PAYLOAD_SIZE) {
+                printf("Buffer de saída excedido a fazer byte stuffing\n");
+            }
             outputMsg[stuffedSize++] = inputMsg[i];
         }
     }
 
-    printf("\nSTUFFING COMPLETED\n"); // debug
+
+    // Opcional: Adicionar um terminador nulo se necessário
+    // if (stuffedSize < maxOutputSize) {
+    //     outputMsg[stuffedSize] = '\0';
+    // }
+
+
+    printf("\nSTUFFING FEITO COM SUCESSO\n"); // debug
 
     return stuffedSize;
 }
+
 
 // função usada para reverter o byte stuffing aplicado na mensagem
 
@@ -442,7 +453,7 @@ int llread(unsigned char *packet)
                         }
                     }
                     else {
-                        if(frameIndex < MAX_PAYLOAD_SIZE){
+                        if(frameIndex < maxp){
                             packet[frameIndex++] = byteRead;
                         }
                         else{
