@@ -19,7 +19,7 @@ typedef enum {
     F, 
     STOP, 
     BCC1, 
-    BCC2,
+    ESC_FOUND,
     READING_PAYLOAD
 } LinkLayerState;
 
