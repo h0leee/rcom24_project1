@@ -1,9 +1,11 @@
 // Link layer protocol implementation
 
 // depois poderei tentar modular o código da stateMachine
-// llread, stateMachine, getControlPacket, displayStatistics
-// bcc2 sem stuffing e depois colocar stuffing nele
+// stateMachine, getControlPacket, displayStatistics
+// bcc2 sem stuffing e depois colocar stuffing nele !!!
 // limpar sempre o buffer, SEMPRE MESMO
+    // memset(0, buffer, bufferSize)
+    // bufferSize = 0
 // no read, o receiver tem de perceber que pode receber disc, se ultrapassar o limite de transmissões
 
 #include "link_layer.h"
@@ -31,11 +33,25 @@ LinkLayerRole role;
 int fd;
 int txFrame = 0, rxFrame = 1;
 
+// stats
+int totalFramesSent = 0;
+int totalFramesReceived = 0;
+int totalTimeouts = 0;
+int totalRetransmissions = 0;
+int totalRReceived = 0;
+int totalREJReceived = 0;
+int bcc2InvalidFrame = 0;
+
+
 // Alarm function handler
 void alarmHandler(int signal)
 {
     alarmFired = FALSE;
     alarmCount++;
+
+    if(tcflush(fd, TCIOFLUSH ) == -1) {
+        perror("Falgha ao limpar buffer da serial port");
+    }
 
     printf("Alarm #%d\n", alarmCount);
 }
@@ -79,12 +95,15 @@ int makeConnection(LinkLayer *connectionParameters)
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
-
     int fd = makeConnection(&connectionParameters);
     if (fd < 0)
     {
         perror(connectionParameters.serialPort);
         return -1;
+    }
+
+    if (tcflush(fd, TCIOFLUSH) == -1) { // limpar tudo antes de iniciar
+        perror("Falha ao limpar os buffers da porta serial");
     }
 
     printf("New termio structure set\n");
@@ -278,8 +297,14 @@ unsigned char computeBCC2(const unsigned char *buffer, size_t length)
 
 int llwrite(const unsigned char *buf, int bufSize)
 {
+
+    
+
     int totalSize = bufSize + 6;    // tamanho total do frame, payload e 6 bytes adicionais
     unsigned char frame[totalSize]; // variável para armazenar o frame antes do stuffing
+
+    // limpar o buffer
+    cleanBuffer(buf, totalSize);
 
     // frame sem qualquer FLAG
     
@@ -310,19 +335,24 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     while (attemptCounter < numberRetransmissions) // Tenta até ao limite de retransmissões
     {
+
+        cleanBuffer(buf, bufSize);
+
         alarmFired = FALSE;
         alarm(timeOut); // Define o temporizador
 
         failedTransmission = 0;
         successfulTransmission = 0;
 
-        auto bytesWritten = writeBytesSerialPort(stuffedFrame, totalSize);
+        int bytesWritten = writeBytesSerialPort(stuffedFrame, totalSize);
         if (bytesWritten < 0)
         {
             perror("Erro ao escrever o frame");
+            cleanBuffer(buf, bufSize);
             continue; // Tenta novamente
         }
 
+        // isto parece mal
         while (!failedTransmission && !successfulTransmission && !alarmFired)
         {
             int result = getControlFrame(fd);
@@ -330,12 +360,15 @@ int llwrite(const unsigned char *buf, int bufSize)
             if (result == -1)
                 continue;
 
-            else if (result == C_REJ(0) || result == C_REJ(1))
+            else if (result == C_REJ(0) || result == C_REJ(1)) {
                 failedTransmission = 1;
+                totalREJReceived++;
+                }
 
             else if (result == C_RR(0) || result == C_RR(1))
             {
                 successfulTransmission = 1;
+                totalFramesSent++;
                 txFrame = (txFrame + 1) % 2; // Alterna o frameSequence entre 0 e 1
             }
         }
@@ -345,8 +378,11 @@ int llwrite(const unsigned char *buf, int bufSize)
         attemptCounter++;
     }
 
+    cleanBuffer(buf, bufSize);
+
     if (!successfulTransmission)
     { // Se todas as tentativas falharam
+        printf("passou as tentativas possíveis de escrever");
         llclose(fd);
         return -1;
     }
@@ -369,6 +405,7 @@ int llread(unsigned char *packet)
     {
         if (readByteSerialPort(&receivedByte) > 0)
         {
+
             switch (machineState)
             {
                 case START:
@@ -501,14 +538,25 @@ int llread(unsigned char *packet)
 
                 if (calculatedBCC2 == bcc2)
                 {
+                    totalFramesReceived++;
                     sendSupervisionFrame(fd, A_RE, C_RR(rxFrame));
                     rxFrame = (rxFrame + 1) % 2;
                     return frameIndex; // Retorna o número de bytes de dados recebidos
                 }
                 else
                 {
+                    // limpar o buffer packet
+                    cleanBuffer(packet, MAX_PAYLOAD_SIZE);
+
+                    // limpar o buffer da porta serial
+                    if(tcflush(fd, TCIFLUSH) == -1) {
+                        perror("falha ao limpar buffer de serial port");
+                    }
+
+
                     printf("Erro: BCC2 inválido. Necessária retransmissão.\n");
                     sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
+                    bcc2InvalidFrame++;
                     machineState = START;
                     frameIndex = 0;
                     continue;
@@ -717,52 +765,15 @@ int llclose(int showStatistics)
         break;
     }
 
+    if(tcflush(fd, TCIOFLUSH) == -1) {
+        perror("falha ao limpar os buffers do serial port");
+        return -1; // falhou
+    }
+
     // ainda não fiz isto
     if (showStatistics)
         displayStatistics();
     return closeSerialPort();
-}
-
-LinkLayerState stateMachine(int frameType)
-{
-    switch (frameType)
-    {
-    case 1:
-        switch (role)
-        {
-        case 1:
-            /* code */
-            break;
-
-        default:
-            break;
-        }
-        break;
-
-    default:
-        switch (role)
-        {
-        case 1:
-            break;
-
-        default:
-            break;
-        }
-        break;
-    }
-}
-
-int sendSupervisionFrame(int fd, unsigned char A_byte, unsigned char C_byte)
-{
-    unsigned char sFrame[5] = {FLAG, A_byte, C_byte, A_byte ^ C_byte, FLAG};
-    
-    int res = writeBytesSerialPort(&sFrame, 5); 
-    if(res != 5) {
-        perror("Failed to send supervision frame");
-        return -1;
-    }
-
-    return 0;
 }
 
 

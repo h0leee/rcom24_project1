@@ -1,6 +1,7 @@
 #ifndef _CONSTANTS_H_
 #define _CONSTANTS_H_
 
+#include <stdio.h>
 
 #define BAUDRATE 38400
 #define FLAG 0x7E
@@ -39,7 +40,6 @@ typedef enum {
 } FrameType;
 
 
-LinkLayerState stateMachine(int frameType);
 
 int sendSupervisionFrame(int fd, unsigned char A_byte, unsigned char C_byte);
 
@@ -48,5 +48,34 @@ void displayStatistics();
 unsigned char getControlFrame(int fd);
 
 int byteStuffing(const unsigned char* inputMsg, int inputSize, unsigned char* outputMessage);
+
+
+unsigned char getControlField(FrameType frameType, int sequenceNumber) {
+    switch (frameType) {
+        case FRAME_TYPE_SET:
+            return C_SET;
+        case FRAME_TYPE_UA:
+            return C_UA;
+        case FRAME_TYPE_DISC:
+            return C_DISC;
+        case FRAME_TYPE_RR:
+            return C_RR(sequenceNumber);
+        case FRAME_TYPE_REJ:
+            return C_REJ(sequenceNumber);
+        case FRAME_TYPE_I:
+            return C_N(sequenceNumber);
+        default:
+            return 0; // Invalid frame type
+    }
+}
+
+void cleanBuffer(unsigned char* buffer, int bufferSize) {
+    memset(0, buffer, bufferSize);
+}
+
+
+// esta função está mal mas já é um começo 
+
+
 
 #endif 
