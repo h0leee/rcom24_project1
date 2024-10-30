@@ -2,6 +2,9 @@
 
 // depois poderei tentar modular o código da stateMachine
 // llread, stateMachine, getControlPacket, displayStatistics
+// bcc2 sem stuffing e depois colocar stuffing nele
+// limpar sempre o buffer, SEMPRE MESMO
+// no read, o receiver tem de perceber que pode receber disc, se ultrapassar o limite de transmissões
 
 #include "link_layer.h"
 #include "serial_port.h"
@@ -87,7 +90,7 @@ int llopen(LinkLayer connectionParameters)
     printf("New termio structure set\n");
 
     machineState = START;
-    unsigned char byteRead;
+    unsigned char receivedByte;
     timeOut = connectionParameters.timeout;
     numberRetransmissions = connectionParameters.nRetransmissions; // Usar uma cópia local para preservar o valor original
 
@@ -108,28 +111,28 @@ int llopen(LinkLayer connectionParameters)
 
             while (machineState != STOP && !alarmFired)
             {
-                if (readByteSerialPort(&byteRead) > 0)
+                if (readByteSerialPort(&receivedByte) > 0)
                 {
                     switch (machineState)
                     {
                     case START:
-                        if (byteRead == FLAG)
+                        if (receivedByte == FLAG)
                             machineState = F;
                         break;
                     case F:
-                        if (byteRead == A_RE)
+                        if (receivedByte == A_RE)
                             machineState = A;
                         break;
                     case A:
-                        if (byteRead == C_UA)
+                        if (receivedByte == C_UA)
                             machineState = C;
                         break;
                     case C:
-                        if (byteRead == (A_RE ^ C_UA))
+                        if (receivedByte == (A_RE ^ C_UA))
                             machineState = BCC1;
                         break;
                     case BCC1:
-                        if (byteRead == FLAG)
+                        if (receivedByte == FLAG)
                             machineState = STOP;
                         else
                             machineState = START;
@@ -149,28 +152,28 @@ int llopen(LinkLayer connectionParameters)
     case LlRx:
         while (machineState != STOP)
         {
-            if (readByteSerialPort(&byteRead) > 0)
+            if (readByteSerialPort(&receivedByte) > 0)
             { // Corrigido o parêntesis aqui
                 switch (machineState)
                 {
                 case START:
-                    if (byteRead == FLAG)
+                    if (receivedByte == FLAG)
                         machineState = F;
                     break;
                 case F:
-                    if (byteRead == A_ER)
+                    if (receivedByte == A_ER)
                         machineState = A;
                     break;
                 case A:
-                    if (byteRead == C_SET)
+                    if (receivedByte == C_SET)
                         machineState = C;
                     break;
                 case C:
-                    if (byteRead == (A_ER ^ C_SET))
+                    if (receivedByte == (A_ER ^ C_SET))
                         machineState = BCC1;
                     break;
                 case BCC1:
-                    if (byteRead == FLAG)
+                    if (receivedByte == FLAG)
                         machineState = STOP;
                     else
                         machineState = START;
@@ -196,46 +199,57 @@ int llopen(LinkLayer connectionParameters)
 
 // Stuffing e o processo inverso vao ser usados no LLWRITE
 
-int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *outputMsg)
-{
-    int stuffedSize = 0; 
+int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *outputMsg) {
+    int stuffedSize = 0;
 
     printf("\nSTUFFING STARTED\n"); // só para debug
 
     printf("%x\n", outputMsg[stuffedSize - 1]);
 
-    for (int i = 0; i < inputSize; i++)
-    {
-        if (inputMsg[i] == FLAG || inputMsg[i] == ESC) // bytes de controlo, se for igual é necessário stuffing
-        {
-            if(stuffedSize + 2 > MAX_PAYLOAD_SIZE) {
-                printf("Buffer de saída excedido a fazer byte stuffing\n");
-            }
-
-            outputMsg[stuffedSize++] = ESC; 
-            outputMsg[stuffedSize++] = inputMsg[i] ^ 0x20;
+    for (int i = 0; i < inputSize; i++) {
+        if (stuffedSize + 2 > MAX_PAYLOAD_SIZE) {
+            fprintf(stderr, "Output buffer overflow in byteStuffing\n");
+            return -1;
         }
-        else {
+        if (inputMsg[i] == FLAG || inputMsg[i] == ESC) {
+            outputMsg[stuffedSize++] = ESC;
+            outputMsg[stuffedSize++] = inputMsg[i] ^ 0x20;
+        } else {
             if(stuffedSize + 1 > MAX_PAYLOAD_SIZE) {
                 printf("Buffer de saída excedido a fazer byte stuffing\n");
+                return -1;
             }
             outputMsg[stuffedSize++] = inputMsg[i];
         }
     }
-
-    // Opcional: Adicionar um terminador nulo se necessário
-    // if (stuffedSize < maxOutputSize) {
-    //     outputMsg[stuffedSize] = '\0';
-    // }
-
-
-    printf("\nSTUFFING FEITO COM SUCESSO\n"); // debug
-
     return stuffedSize;
 }
 
 
+
 // função usada para reverter o byte stuffing aplicado na mensagem
+int byteDestuffing(const unsigned char *inputMsg, int inputSize, unsigned char *outputMsg, int maxOutputSize) {
+    int destuffedSize = 0;
+    int i = 0;
+
+    while (i < inputSize) {
+        if (destuffedSize >= maxOutputSize) {
+            fprintf(stderr, "Output buffer overflow in byteDestuffing\n");
+            return -1;
+        }
+        if (inputMsg[i] == ESC) {
+            if (i + 1 >= inputSize) {
+                fprintf(stderr, "Incomplete escape sequence\n");
+                return -1;
+            }
+            outputMsg[destuffedSize++] = inputMsg[i + 1] ^ 0x20;
+            i += 2;
+        } else {
+            outputMsg[destuffedSize++] = inputMsg[i++];
+        }
+    }
+    return destuffedSize;
+}
 
 
 
@@ -346,39 +360,39 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 int llread(unsigned char *packet)
 {
-    unsigned char byteRead, cByte;
+    unsigned char receivedByte, cByte;
     LinkLayerState machineState = START;
     int frameIndex = 0;
     unsigned char bcc2;
 
     while (1)
     {
-        if (readByteSerialPort(&byteRead) > 0)
+        if (readByteSerialPort(&receivedByte) > 0)
         {
             switch (machineState)
             {
                 case START:
-                    if (byteRead == FLAG)
+                    if (receivedByte == FLAG)
                         machineState = F;
                     break;
 
                 case F:
-                    if (byteRead == A_ER)
+                    if (receivedByte == A_ER)
                         machineState = A;
-                    else if (byteRead != FLAG)
+                    else if (receivedByte != FLAG)
                         machineState = START;
-                    // Se byteRead == FLAG, permanece no estado F
+                    // Se receivedByte == FLAG, permanece no estado F
                     break;
 
                 case A:
-                    if (byteRead == C_N(0) || byteRead == C_N(1))
+                    if (receivedByte == C_N(0) || receivedByte == C_N(1))
                     {
                         machineState = C;
-                        cByte = byteRead;
+                        cByte = receivedByte;
                     }
-                    else if (byteRead == FLAG)
+                    else if (receivedByte == FLAG)
                         machineState = F;
-                    else if (byteRead == C_DISC)
+                    else if (receivedByte == C_DISC)
                     {
                         sendSupervisionFrame(fd, A_RE, C_DISC);
                         return 0; // Indica desconexão
@@ -388,22 +402,22 @@ int llread(unsigned char *packet)
                     break;
 
                 case C:
-                    if (byteRead == (A_ER ^ cByte))
+                    if (receivedByte == (A_ER ^ cByte))
                         machineState = BCC1;
-                    else if (byteRead == FLAG)
+                    else if (receivedByte == FLAG)
                         machineState = F;
                     else
                         machineState = START;
                     break;
 
                 case BCC1:
-                    if (byteRead == FLAG)
+                    if (receivedByte == FLAG)
                     {
                         // Frame inválido, no data
                         machineState = START;
                         frameIndex = 0;
                     }
-                    else if (byteRead == ESC)
+                    else if (receivedByte == ESC)
                     {
                         machineState = ESC_FOUND;
                     }
@@ -412,7 +426,7 @@ int llread(unsigned char *packet)
                         // Armazena o byte de dados
                         if (frameIndex < MAX_PAYLOAD_SIZE)
                         {
-                            packet[frameIndex++] = byteRead;
+                            packet[frameIndex++] = receivedByte;
                         }
                         else
                         {
@@ -426,7 +440,7 @@ int llread(unsigned char *packet)
                 case ESC_FOUND:
                     machineState = BCC1; // Retorna ao estado BCC1 após tratar o escape
 
-                    if (byteRead == 0x5E) // FLAG escapado
+                    if (receivedByte == 0x5E) // FLAG escapado
                     {
                         if (frameIndex < MAX_PAYLOAD_SIZE)
                         {
@@ -439,7 +453,7 @@ int llread(unsigned char *packet)
                             frameIndex = 0;
                         }
                     }
-                    else if (byteRead == 0x5D) // ESC escapado
+                    else if (receivedByte == 0x5D) // ESC escapado
                     {
                         if (frameIndex < MAX_PAYLOAD_SIZE)
                         {
@@ -467,7 +481,7 @@ int llread(unsigned char *packet)
             }
 
             // Verifica se a FLAG final foi recebida no estado BCC1
-            if (machineState == BCC1 && byteRead == FLAG)
+            if (machineState == BCC1 && receivedByte == FLAG)
             {
                 // Recebeu FLAG final
                 if (frameIndex < 1)
@@ -512,7 +526,7 @@ int llread(unsigned char *packet)
 int llclose(int showStatistics)
 {
     machineState = START;
-    unsigned char byteRead;
+    unsigned char receivedByte;
     (void)signal(SIGALRM, alarmHandler);
 
     int retransmissions = numberRetransmissions;
@@ -530,38 +544,38 @@ int llclose(int showStatistics)
             machineState = START;
             while (!alarmFired && machineState != STOP)
             {
-                if (readByteSerialPort(&byteRead) > 0)
+                if (readByteSerialPort(&receivedByte) > 0)
                 {
                     switch (machineState)
                     {
                     case START:
-                        if (byteRead == FLAG)
+                        if (receivedByte == FLAG)
                             machineState = F;
                         break;
 
                     case F:
-                        if (byteRead == A_ER)
+                        if (receivedByte == A_ER)
                             machineState = A;
-                        else if (byteRead != FLAG)
+                        else if (receivedByte != FLAG)
                             machineState = START;
                         break;
 
                     case A:
-                        if (byteRead == C_DISC)
+                        if (receivedByte == C_DISC)
                             machineState = C;
-                        else if (byteRead == FLAG)
+                        else if (receivedByte == FLAG)
                             machineState = F;
                         break;
 
                     case C:
-                        if (byteRead == (A_ER ^ C_DISC))
+                        if (receivedByte == (A_ER ^ C_DISC))
                             machineState = BCC1;
-                        else if (byteRead == FLAG)
+                        else if (receivedByte == FLAG)
                             machineState = F;
                         break;
 
                     case BCC1:
-                        if (byteRead == FLAG)
+                        if (receivedByte == FLAG)
                             machineState = STOP;
                         else
                             machineState = START;
@@ -594,40 +608,40 @@ int llclose(int showStatistics)
 
             while (!alarmFired && machineState != STOP)
             {
-                if (readByteSerialPort(&byteRead) > 0)
+                if (readByteSerialPort(&receivedByte) > 0)
                 {
                     switch (machineState)
                     {
                     case START:
-                        if (byteRead == FLAG)
+                        if (receivedByte == FLAG)
                             machineState = F;
                         break;
 
                     case F:
                         // esta cena não sei
-                        if (byteRead == A_ER)
+                        if (receivedByte == A_ER)
                             machineState = A;
-                        else if (byteRead != FLAG)
+                        else if (receivedByte != FLAG)
                             machineState = START;
                         break;
 
                     case A:
-                        if (byteRead == C_DISC)
+                        if (receivedByte == C_DISC)
                             machineState = C;
-                        else if (byteRead == FLAG)
+                        else if (receivedByte == FLAG)
                             machineState = F;
                         break;
 
                     case C:
                         // também afeta esta
-                        if (byteRead == (A_ER ^ C_DISC))
+                        if (receivedByte == (A_ER ^ C_DISC))
                             machineState = BCC1;
-                        else if (byteRead == FLAG)
+                        else if (receivedByte == FLAG)
                             machineState = F;
                         break;
 
                     case BCC1:
-                        if (byteRead == FLAG)
+                        if (receivedByte == FLAG)
                             machineState = STOP;
                         else
                             machineState = START;
@@ -651,39 +665,39 @@ int llclose(int showStatistics)
         machineState = START;
         while (machineState != STOP && retransmissions > 0)
         {
-            if (readByteSerialPort(&byteRead) > 0)
+            if (readByteSerialPort(&receivedByte) > 0)
             {
                 switch (machineState)
                 {
                 case START:
-                    if (byteRead == FLAG)
+                    if (receivedByte == FLAG)
                         machineState = F;
                     break;
 
                 case F:
-                    if (byteRead == A_ER)
+                    if (receivedByte == A_ER)
                         machineState = A;
-                    else if (byteRead != FLAG)
+                    else if (receivedByte != FLAG)
                         machineState = START;
                     break;
 
                 case A:
-                    if (byteRead == C_UA)
+                    if (receivedByte == C_UA)
                         machineState = C;
-                    else if (byteRead == FLAG)
+                    else if (receivedByte == FLAG)
                         machineState = F;
                     break;
 
                 case C:
                     // também afeta esta
-                    if (byteRead == (A_ER ^ C_UA))
+                    if (receivedByte == (A_ER ^ C_UA))
                         machineState = BCC1;
-                    else if (byteRead == FLAG)
+                    else if (receivedByte == FLAG)
                         machineState = F;
                     break;
 
                 case BCC1:
-                    if (byteRead == FLAG)
+                    if (receivedByte == FLAG)
                         machineState = STOP;
                     else
                         machineState = START;
@@ -742,8 +756,13 @@ int sendSupervisionFrame(int fd, unsigned char A_byte, unsigned char C_byte)
 {
     unsigned char sFrame[5] = {FLAG, A_byte, C_byte, A_byte ^ C_byte, FLAG};
     
-    // isto parece estar mesmo mal 
-    return writeBytesSerialPort(sFrame, 5);
+    int res = writeBytesSerialPort(&sFrame, 5); 
+    if(res != 5) {
+        perror("Failed to send supervision frame");
+        return -1;
+    }
+
+    return 0;
 }
 
 
@@ -751,52 +770,52 @@ int sendSupervisionFrame(int fd, unsigned char A_byte, unsigned char C_byte)
 // ela pode estar mal
 unsigned char getControlFrame(int fd)
 {
-    unsigned char byteRead;
+    unsigned char receivedByte;
     LinkLayerState machineState = START;
     unsigned char controlByte = 0;
 
     while (machineState != STOP)
     {
         // será que tenho de colcoar uma condição para quando retorna 0 bytes escritos?
-        if (readByteSerialPort(&byteRead) > 0)
+        if (readByteSerialPort(&receivedByte) > 0)
         {
             switch (machineState)
             {
             case START:
-                if (byteRead == FLAG)
+                if (receivedByte == FLAG)
                     machineState = F;
                 break;
 
             case F:
-                if (byteRead == A_RE)
+                if (receivedByte == A_RE)
                     machineState = A;
-                else if (byteRead != FLAG)
+                else if (receivedByte != FLAG)
                     machineState = START;
                 break;
 
             case A:
-                if (byteRead == C_RR(0) || byteRead == C_RR(1) || byteRead == C_REJ(0) || byteRead == C_REJ(1))
+                if (receivedByte == C_RR(0) || receivedByte == C_RR(1) || receivedByte == C_REJ(0) || receivedByte == C_REJ(1))
                 {
-                    controlByte = byteRead;
+                    controlByte = receivedByte;
                     machineState = C;
                 }
-                else if (byteRead == FLAG)
+                else if (receivedByte == FLAG)
                     machineState = F;
                 else
                     machineState = START;
                 break;
 
             case C:
-                if (byteRead == (A_RE ^ controlByte))
+                if (receivedByte == (A_RE ^ controlByte))
                     machineState = BCC1;
-                else if (byteRead == FLAG)
+                else if (receivedByte == FLAG)
                     machineState = F;
                 else
                     machineState = START;
                 break;
 
             case BCC1:
-                if (byteRead == FLAG)
+                if (receivedByte == FLAG)
                     machineState = STOP;
                 else
                     machineState = START;

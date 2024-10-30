@@ -4,6 +4,8 @@
     "__config": "cpp",
     "ostream": "cpp",
     "print": "cpp",
-    "constants.h": "c"
+    "constants.h": "c",
+    "stdlib.h": "c",
+    "termios.h": "c"
   }
 }

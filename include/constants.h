@@ -29,6 +29,16 @@ typedef enum {
 } LinkLayerState;
 
 
+typedef enum {
+    FRAME_TYPE_SET,
+    FRAME_TYPE_UA,
+    FRAME_TYPE_DISC,
+    FRAME_TYPE_I,
+    FRAME_TYPE_RR,
+    FRAME_TYPE_REJ
+} FrameType;
+
+
 LinkLayerState stateMachine(int frameType);
 
 int sendSupervisionFrame(int fd, unsigned char A_byte, unsigned char C_byte);
