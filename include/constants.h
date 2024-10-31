@@ -14,6 +14,8 @@
 #define C_RR(n) (0xAA | (n))    // Para RR0 (0xAA) e RR1 (0xAB)
 #define C_REJ(n) (0x54 | (n))   // Para REJ0 (0x54) e REJ1 (0x55)
 #define C_N(Ns) ((Ns) << 7)
+#define C_REJ_SET 0x0F // Um código de controle específico para REJ de SET
+
 
 
 

@@ -4,8 +4,8 @@
 // stateMachine, getControlPacket, displayStatistics
 // bcc2 sem stuffing e depois colocar stuffing nele !!!
 // limpar sempre o buffer, SEMPRE MESMO
-    // memset(0, buffer, bufferSize)
-    // bufferSize = 0
+// memset(0, buffer, bufferSize)
+// bufferSize = 0
 // no read, o receiver tem de perceber que pode receber disc, se ultrapassar o limite de transmissões
 
 #include "link_layer.h"
@@ -33,33 +33,33 @@ LinkLayerRole role;
 int fd;
 int txFrame = 0, rxFrame = 1;
 
-
-
-int sendRejectionFrame(int fd, unsigned char address, unsigned char control) {
+int sendRejectionFrame(int fd, unsigned char address, unsigned char control)
+{
     unsigned char frame[5];
     frame[0] = FLAG;
     frame[1] = address;
-    frame[2] = control; // C_REJ(0) ou C_REJ(1)
+    frame[2] = control;             // C_REJ(0) ou C_REJ(1)
     frame[3] = frame[1] ^ frame[2]; // BCC
     frame[4] = FLAG;
 
-    if(writeBytesSerialPort(frame, 5) < 0) return -1;
+    if (writeBytesSerialPort(frame, 5) < 0)
+        return -1;
     return 0;
 }
 
-
-int sendSupervisionFrame(int fd, unsigned char address, unsigned char control) {
+int sendSupervisionFrame(int fd, unsigned char address, unsigned char control)
+{
     unsigned char frame[5];
     frame[0] = FLAG;
     frame[1] = address;
-    frame[2] = control; // C_REJ(0) ou C_REJ(1)
+    frame[2] = control;             // C_REJ(0) ou C_REJ(1)
     frame[3] = frame[1] ^ frame[2]; // BCC
     frame[4] = FLAG;
 
-    if(writeBytesSerialPort(frame, 5) < 0) return -1;
+    if (writeBytesSerialPort(frame, 5) < 0)
+        return -1;
     return 0;
 }
-
 
 // Alarm function handler
 void alarmHandler(int signal)
@@ -67,7 +67,8 @@ void alarmHandler(int signal)
     alarmFired = FALSE;
     alarmCount++;
 
-    if(tcflush(fd, TCIOFLUSH ) == -1) {
+    if (tcflush(fd, TCIOFLUSH) == -1)
+    {
         perror("Falgha ao limpar buffer da serial port");
     }
 
@@ -120,7 +121,8 @@ int llopen(LinkLayer connectionParameters)
         return -1;
     }
 
-    if (tcflush(fd, TCIOFLUSH) == -1) { // limpar tudo antes de iniciar
+    if (tcflush(fd, TCIOFLUSH) == -1)
+    { // limpar tudo antes de iniciar
         perror("Falha ao limpar os buffers da porta serial");
     }
 
@@ -150,7 +152,6 @@ int llopen(LinkLayer connectionParameters)
 
             alarmFired = FALSE;
             alarm(timeOut);
-            
 
             while (machineState != STOP && !alarmFired)
             {
@@ -167,19 +168,30 @@ int llopen(LinkLayer connectionParameters)
                     case F:
                         if (receivedByte == A_RE)
                             machineState = A;
-                        else if(receivedByte == FLAG) machineState = F;
-                        else machineState = START;
+                        else if (receivedByte == FLAG)
+                            machineState = F;
+                        else
+                            machineState = START;
                         break;
                     case A:
                         if (receivedByte == C_UA)
                             machineState = C;
-                        else if(receivedByte == FLAG) machineState = F;
-                        else machineState = START;
+                        else if(receivedByte == C_REJ_SET) {
+                            printf("TRANSMISSOR: quadro SET rejeitdo");
+                            retransmissions--;
+                            machineState = START;
+                            break;
+                        }
+                        else if (receivedByte == FLAG)
+                            machineState = F;
+                        else
+                            machineState = START;
                         break;
                     case C:
                         if (receivedByte == (A_RE ^ C_UA))
                             machineState = BCC1;
-                        else {
+                        else
+                        {
                             printf("Transmissor: BCC1 incorreto. Descartando quadro.\n");
                             machineState = START;
                         }
@@ -199,24 +211,27 @@ int llopen(LinkLayer connectionParameters)
 
             alarm(0);
 
-            if(machineState == STOP) {
+            if (machineState == STOP)
+            {
                 printf("Transmissor: Quadro UA recebido com sucesso\n");
                 break;
             }
 
-            else if(alarmFired) {
+            else if (alarmFired)
+            {
                 printf("Transmissor: timeout. Vamos tentar de novo\n");
                 retransmissions--;
             }
 
-            else{
+            else
+            {
                 printf("Transmissor: erro a receber UA\n");
                 retransmissions--;
             }
-
         }
 
-        if (retransmissions == 0) {
+        if (retransmissions == 0)
+        {
             printf("Transmissor: número máximo de retransmissões atingido. Abortando conexão.\n");
             return -1;
         }
@@ -226,16 +241,15 @@ int llopen(LinkLayer connectionParameters)
     {
         printf("Receptor: aguardando quadro SET...\n");
 
-        // Configura o manipulador de sinal para o alarme
         (void)signal(SIGALRM, alarmHandler);
 
-        // Define o timeout para o receptor (por exemplo, 3 segundos)
         int receiverTimeout = 3;
         alarmFired = FALSE;
         alarm(receiverTimeout);
 
         int errorCount = 0;
         const int maxErrors = 5;
+        int sendRej = 0; // Flag para enviar REJ
 
         while (machineState != STOP && !alarmFired && errorCount < maxErrors)
         {
@@ -254,6 +268,8 @@ int llopen(LinkLayer connectionParameters)
                         machineState = A;
                     else if (receivedByte != FLAG)
                         machineState = START;
+                    else
+                        sendRej = 1;
                     break;
                 case A:
                     if (receivedByte == C_SET)
@@ -261,7 +277,10 @@ int llopen(LinkLayer connectionParameters)
                     else if (receivedByte == FLAG)
                         machineState = F;
                     else
+                    {
                         machineState = START;
+                        sendRej = 1;
+                    }
                     break;
                 case C:
                     if (receivedByte == (A_ER ^ C_SET))
@@ -271,19 +290,31 @@ int llopen(LinkLayer connectionParameters)
                         printf("Receptor: BCC1 incorreto. Descartando quadro.\n");
                         machineState = START;
                         errorCount++;
+                        sendRej = 1;
                     }
                     break;
                 case BCC1:
                     if (receivedByte == FLAG)
                         machineState = STOP;
                     else
+                    {
                         machineState = START;
+                        sendRej = 1;
+                    }
                     break;
                 default:
                     printf("Receptor: estado desconhecido.\n");
                     machineState = START;
                     errorCount++;
+                    sendRej = 1;
                     break;
+                }
+
+                if (sendRej)
+                {
+                    sendRejectionFrame(fd, A_RE, C_REJ_SET); // Ajuste o número de sequência conforme necessário
+                    printf("Receptor: quadro REJ enviado.\n");
+                    sendRej = 0;
                 }
             }
             else
@@ -293,7 +324,7 @@ int llopen(LinkLayer connectionParameters)
             }
         }
 
-        alarm(0); // Cancela o alarme
+        alarm(0);
 
         if (alarmFired)
         {
@@ -329,24 +360,30 @@ int llopen(LinkLayer connectionParameters)
 
 // Stuffing e o processo inverso vao ser usados no LLWRITE
 
-
-int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char* outputMsg, unsigned char bcc2) {
+int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *outputMsg, unsigned char bcc2)
+{
     int stuffedSize = 0;
 
     printf("\nSTUFFING STARTED\n"); // Debug
 
-    for (int i = 0; i < inputSize; i++) {
-        if (inputMsg[i] == FLAG || inputMsg[i] == ESC) {
+    for (int i = 0; i < inputSize; i++)
+    {
+        if (inputMsg[i] == FLAG || inputMsg[i] == ESC)
+        {
             // Precisa de 2 bytes para stuffing
-            if (stuffedSize + 2 > MAX_PAYLOAD_SIZE) {
+            if (stuffedSize + 2 > MAX_PAYLOAD_SIZE)
+            {
                 fprintf(stderr, "Output buffer overflow in byteStuffing\n");
                 return -1;
             }
             outputMsg[stuffedSize++] = ESC;
             outputMsg[stuffedSize++] = inputMsg[i] ^ 0x02;
-        } else {
+        }
+        else
+        {
             // Precisa de 1 byte
-            if (stuffedSize + 1 > MAX_PAYLOAD_SIZE) {
+            if (stuffedSize + 1 > MAX_PAYLOAD_SIZE)
+            {
                 fprintf(stderr, "Output buffer overflow in byteStuffing\n");
                 return -1;
             }
@@ -354,47 +391,50 @@ int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char* ou
         }
     }
 
-    if(bcc2 == FLAG || bcc2 == ESC) {
-        if (stuffedSize + 2 > MAX_PAYLOAD_SIZE) {
-                fprintf(stderr, "Output buffer overflow in byteStuffing\n");
-                return -1;
-            }
-            outputMsg[stuffedSize++] = ESC;
-            outputMsg[stuffedSize++] = bcc2 ^ 0x02;
+    if (bcc2 == FLAG || bcc2 == ESC)
+    {
+        if (stuffedSize + 2 > MAX_PAYLOAD_SIZE)
+        {
+            fprintf(stderr, "Output buffer overflow in byteStuffing\n");
+            return -1;
+        }
+        outputMsg[stuffedSize++] = ESC;
+        outputMsg[stuffedSize++] = bcc2 ^ 0x02;
     }
 
     return stuffedSize;
 }
 
-
-
-
-
 // função usada para reverter o byte stuffing aplicado na mensagem
-int byteDestuffing(const unsigned char *inputMsg, int inputSize, unsigned char *outputMsg, int maxOutputSize) {
+int byteDestuffing(const unsigned char *inputMsg, int inputSize, unsigned char *outputMsg, int maxOutputSize)
+{
     int destuffedSize = 0;
     int i = 0;
 
-    while (i < inputSize) {
-        if (destuffedSize >= maxOutputSize) {
+    while (i < inputSize)
+    {
+        if (destuffedSize >= maxOutputSize)
+        {
             fprintf(stderr, "Output buffer overflow in byteDestuffing\n");
             return -1;
         }
-        if (inputMsg[i] == ESC) {
-            if (i + 1 >= inputSize) {
+        if (inputMsg[i] == ESC)
+        {
+            if (i + 1 >= inputSize)
+            {
                 fprintf(stderr, "Incomplete escape sequence\n");
                 return -1;
             }
             outputMsg[destuffedSize++] = inputMsg[i + 1] ^ 0x20;
             i += 2;
-        } else {
+        }
+        else
+        {
             outputMsg[destuffedSize++] = inputMsg[i++];
         }
     }
     return destuffedSize;
 }
-
-
 
 unsigned char computeBCC2(const unsigned char *buffer, size_t length)
 {
@@ -419,25 +459,26 @@ unsigned char computeBCC2(const unsigned char *buffer, size_t length)
 // LLWRITE
 ////////////////////////////////////////////////
 
-int llwrite(const unsigned char *buf, int bufSize) {
-    // no llwrite recebo um packet ou a parte da payload de uma frame apenas? 
-    
-    unsigned char bcc2 =  computeBCC2(buf, bufSize); // BCC2, sem byteStuffing 
+int llwrite(const unsigned char *buf, int bufSize)
+{
+    // no llwrite recebo um packet ou a parte da payload de uma frame apenas?
 
+    unsigned char bcc2 = computeBCC2(buf, bufSize); // BCC2, sem byteStuffing
 
     unsigned char stuffedPayload[MAX_PAYLOAD_SIZE];
     int stuffedPayloadSize = byteStuffing(buf, bufSize, stuffedPayload, bcc2); // aqui terei a length do bytestuffing da payload com bcc2
 
     int totalSize = stuffedPayloadSize + 5; // stuffed e 5 bytes adicionais (f, a, c, bcc1, f)
-    unsigned char fullFrame[totalSize]; 
+    unsigned char fullFrame[totalSize];
 
     int attemptCounter = 0;
     int successfulTransmission = 0;
     int failedTransmission = 0;
 
-    while (attemptCounter < numberRetransmissions) {
+    while (attemptCounter < numberRetransmissions)
+    {
         // Limpa o stuffedFrame antes de cada tentativa de stuffing
-        // está exagerado este size, i know 
+        // está exagerado este size, i know
         cleanBuffer(fullFrame, totalSize, NULL);
         cleanBuffer(stuffedPayload, stuffedPayloadSize, NULL);
 
@@ -446,52 +487,57 @@ int llwrite(const unsigned char *buf, int bufSize) {
         fullFrame[2] = C_N(txFrame);
         fullFrame[3] = fullFrame[1] ^ fullFrame[2];
 
-
         // Executa o byte stuffing no payload e no bcc2
         stuffedPayloadSize = byteStuffing(buf, bufSize, stuffedPayload, bcc2);
-        if (stuffedPayloadSize == -1) {
+        if (stuffedPayloadSize == -1)
+        {
             fprintf(stderr, "Erro no byte stuffing\n");
             return -1;
         }
 
-
         for (size_t i = 4; i < stuffedPayloadSize + 4; i++)
         {
-            fullFrame[i] = stuffedPayload[i-4];
+            fullFrame[i] = stuffedPayload[i - 4];
         }
 
         fullFrame[4 + stuffedPayloadSize] = FLAG;
 
         STOP = FALSE;
         alarmFired = FALSE;
-        alarm(timeOut);               // Define o temporizador
+        alarm(timeOut); // Define o temporizador
 
-        int bytesWritten = writeBytesSerialPort(fullFrame, totalSize); // isto pode estar mal 
-        if (bytesWritten < 0) {
+        int bytesWritten = writeBytesSerialPort(fullFrame, totalSize); // isto pode estar mal
+        if (bytesWritten < 0)
+        {
             perror("Erro ao escrever o frame");
             continue; // Tenta novamente
         }
 
         // Verifica se a transmissão foi bem-sucedida
-        while (!successfulTransmission && !alarmFired && !failedTransmission) {
+        while (!successfulTransmission && !alarmFired && !failedTransmission)
+        {
             int result = getControlFrame(fd);
-            if (result == C_REJ(0) || result == C_REJ(1)) {
+            if (result == C_REJ(0) || result == C_REJ(1))
+            {
                 failedTransmission = 1;
             }
-            else if (result == C_RR(0) || result == C_RR(1)) {
+            else if (result == C_RR(0) || result == C_RR(1))
+            {
                 successfulTransmission = 1;
                 txFrame = (txFrame + 1) % 2; // Alterna o número de sequência
             }
         }
 
-        if (successfulTransmission) break;
+        if (successfulTransmission)
+            break;
         attemptCounter++;
     }
 
     cleanBuffer(fullFrame, totalSize, NULL);
     cleanBuffer(stuffedPayload, stuffedPayloadSize, NULL);
 
-    if (!successfulTransmission) {
+    if (!successfulTransmission)
+    {
         printf("Número máximo de tentativas atingido\n");
         llclose(fd);
         return -1;
@@ -504,89 +550,111 @@ int llwrite(const unsigned char *buf, int bufSize) {
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
-int llread(unsigned char *packet) {
+int llread(unsigned char *packet)
+{
     unsigned char receivedByte, cByte; // cByte corresponde ao C
     LinkLayerState machineState = START;
     int frameIndex = 0; // index do packet que estou a ler
     unsigned char bcc2; // para depois ter método de comparação
 
-    while (1) {
-        if (readByteSerialPort(&receivedByte) > 0) {
+    while (1)
+    {
+        if (readByteSerialPort(&receivedByte) > 0)
+        {
 
-            switch (machineState) {
-                case START:
-                    if (receivedByte == FLAG)
-                        machineState = F;
-                    break;
+            switch (machineState)
+            {
+            case START:
+                if (receivedByte == FLAG)
+                    machineState = F;
+                break;
 
-                case F:
-                    if (receivedByte == A_ER)
-                        machineState = A;
-                    else if (receivedByte != FLAG)
-                        machineState = START;
-                    break;
+            case F:
+                if (receivedByte == A_ER)
+                    machineState = A;
+                else if (receivedByte != FLAG)
+                    machineState = START;
+                break;
 
-                case A:
-                    if (receivedByte == C_N(0) || receivedByte == C_N(1)) {
-                        machineState = C;
-                        cByte = receivedByte;
-                    } else if (receivedByte == FLAG)
-                        machineState = F;
-                    else if (receivedByte == C_DISC) {
-                        sendSupervisionFrame(fd, A_RE, C_DISC);
-                        return 0; // Indica desconexão
-                    } else
-                        machineState = START;
-                    break;
+            case A:
+                if (receivedByte == C_N(0) || receivedByte == C_N(1))
+                {
+                    machineState = C;
+                    cByte = receivedByte;
+                }
+                else if (receivedByte == FLAG)
+                    machineState = F;
+                else if (receivedByte == C_DISC)
+                {
+                    sendSupervisionFrame(fd, A_RE, C_DISC);
+                    return 0; // Indica desconexão
+                }
+                else
+                    machineState = START;
+                break;
 
-                case C:
-                    if (receivedByte == (A_ER ^ cByte))
-                        machineState = BCC1;
-                    else if (receivedByte == FLAG)
-                        machineState = F;
-                    else
-                        machineState = START;
-                    break;
-
-                case BCC1:
-                    if (receivedByte == FLAG) {
-                        // Frame inválido, no data
-                        machineState = F;
-                        frameIndex = 0;
-                    } else if (frameIndex >= MAX_PAYLOAD_SIZE) {
-                        perror("[LLREAD] OVERFLOW NO BUFFER DE DADOS");
-                        sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
-                        clean_buffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
-                        machineState = START;
-                        continue;
-                    } else if (receivedByte == ESC) {
-                        machineState = ESC_FOUND;
-                    } else {
-                        packet[frameIndex++] = receivedByte;
-                    }
-                    break;
-
-                case ESC_FOUND:
+            case C:
+                if (receivedByte == (A_ER ^ cByte))
                     machineState = BCC1;
-                    if (receivedByte == 0x5E) { // FLAG escapado
-                        packet[frameIndex++] = FLAG;
-                    } else if (receivedByte == 0x5D) { // ESC escapado
-                        packet[frameIndex++] = ESC;
-                    } else {
-                        printf("Erro: sequência de escape inválida.\n");
-                        machineState = START;
-                        frameIndex = 0;
-                    }
-                    break;
+                else if (receivedByte == FLAG)
+                    machineState = F;
+                else
+                    machineState = START;
+                break;
 
-                default:
+            case BCC1:
+                if (receivedByte == FLAG)
+                {
+                    // Frame inválido, no data
+                    machineState = F;
+                    frameIndex = 0;
+                }
+                else if (frameIndex >= MAX_PAYLOAD_SIZE)
+                {
+                    perror("[LLREAD] OVERFLOW NO BUFFER DE DADOS");
+                    sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
+                    clean_buffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
+                    machineState = START;
+                    continue;
+                }
+                else if (receivedByte == ESC)
+                {
+                    machineState = ESC_FOUND;
+                }
+                else
+                {
+                    packet[frameIndex++] = receivedByte;
+                }
+                break;
+
+            case ESC_FOUND:
+                machineState = BCC1;
+                if (receivedByte == 0x5E)
+                { // FLAG escapado
+                    packet[frameIndex++] = FLAG;
+                }
+                else if (receivedByte == 0x5D)
+                { // ESC escapado
+                    packet[frameIndex++] = ESC;
+                }
+                else
+                {
+                    printf("Erro: sequência de escape inválida.\n");
                     machineState = START;
                     frameIndex = 0;
-                    break;
+                }
+                break;
+
+            default:
+                machineState = START;
+                frameIndex = 0;
+                break;
             }
 
-            if (machineState == BCC1 && receivedByte == FLAG) {
-                if (frameIndex < 1) {
+            if (machineState == BCC1 && receivedByte == FLAG)
+            {
+                if (frameIndex < 1)
+                {
                     printf("Erro: Nenhum dado recebido antes da FLAG final.\n");
                     machineState = START;
                     frameIndex = 0;
@@ -598,14 +666,18 @@ int llread(unsigned char *packet) {
 
                 unsigned char calculatedBCC2 = computeBCC2(packet, frameIndex);
 
-                if (calculatedBCC2 == bcc2) {
+                if (calculatedBCC2 == bcc2)
+                {
                     sendSupervisionFrame(fd, A_RE, C_RR(rxFrame));
                     rxFrame = (rxFrame + 1) % 2;
                     return frameIndex;
-                } else {
+                }
+                else
+                {
                     clean_buffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
 
-                    if (tcflush(fd, TCIFLUSH) == -1) {
+                    if (tcflush(fd, TCIFLUSH) == -1)
+                    {
                         perror("falha ao limpar buffer de serial port");
                     }
 
@@ -819,7 +891,8 @@ int llclose(int showStatistics)
         break;
     }
 
-    if(tcflush(fd, TCIOFLUSH) == -1) {
+    if (tcflush(fd, TCIOFLUSH) == -1)
+    {
         perror("falha ao limpar os buffers do serial port");
         return -1; // falhou
     }
@@ -829,8 +902,6 @@ int llclose(int showStatistics)
         displayStatistics();
     return closeSerialPort();
 }
-
-
 
 // ela pode estar mal
 unsigned char getControlFrame(int fd)
@@ -894,7 +965,6 @@ unsigned char getControlFrame(int fd)
     }
     return controlByte;
 }
-
 
 // to do
 void displayStatistics()
