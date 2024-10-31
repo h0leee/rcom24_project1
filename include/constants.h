@@ -42,6 +42,7 @@ typedef enum {
 
 
 int sendSupervisionFrame(int fd, unsigned char A_byte, unsigned char C_byte);
+int sendRejectionFrame(int fd, unsigned char A_byte, unsigned char C_byte);
 
 void displayStatistics();
 

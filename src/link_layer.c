@@ -35,6 +35,31 @@ int txFrame = 0, rxFrame = 1;
 
 
 
+int sendRejectionFrame(int fd, unsigned char address, unsigned char control) {
+    unsigned char frame[5];
+    frame[0] = FLAG;
+    frame[1] = address;
+    frame[2] = control; // C_REJ(0) ou C_REJ(1)
+    frame[3] = frame[1] ^ frame[2]; // BCC
+    frame[4] = FLAG;
+
+    if(writeBytesSerialPort(frame, 5) < 0) return -1;
+    return 0;
+}
+
+
+int sendSupervisionFrame(int fd, unsigned char address, unsigned char control) {
+    unsigned char frame[5];
+    frame[0] = FLAG;
+    frame[1] = address;
+    frame[2] = control; // C_REJ(0) ou C_REJ(1)
+    frame[3] = frame[1] ^ frame[2]; // BCC
+    frame[4] = FLAG;
+
+    if(writeBytesSerialPort(frame, 5) < 0) return -1;
+    return 0;
+}
+
 
 // Alarm function handler
 void alarmHandler(int signal)
