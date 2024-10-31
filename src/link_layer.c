@@ -110,21 +110,29 @@ int llopen(LinkLayer connectionParameters)
     {
     case LlTx:
 
+        printf("transmissor a iniciar conexão");
+
         (void)signal(SIGALRM, alarmHandler);
 
         int retransmissions = numberRetransmissions;
 
-        while (retransmissions > 0 && machineState != STOP)
+        while (retransmissions > 0)
         {
 
+            machineState = START;
             sendSupervisionFrame(fd, A_ER, C_SET);
-            alarm(timeOut);
+            printf("transmissor envio SET");
+
             alarmFired = FALSE;
+            alarm(timeOut);
+            
 
             while (machineState != STOP && !alarmFired)
             {
                 if (readByteSerialPort(&receivedByte) > 0)
                 {
+                    printf("Transmissor: byte recebido: 0x%02X\n", receivedByte);
+
                     switch (machineState)
                     {
                     case START:
@@ -134,14 +142,22 @@ int llopen(LinkLayer connectionParameters)
                     case F:
                         if (receivedByte == A_RE)
                             machineState = A;
+                        else if(receivedByte == FLAG) machineState = F;
+                        else machineState = START;
                         break;
                     case A:
                         if (receivedByte == C_UA)
                             machineState = C;
+                        else if(receivedByte == FLAG) machineState = F;
+                        else machineState = START;
                         break;
                     case C:
                         if (receivedByte == (A_RE ^ C_UA))
                             machineState = BCC1;
+                        else {
+                            printf("Transmissor: BCC1 incorreto. Descartando quadro.\n");
+                            machineState = START;
+                        }
                         break;
                     case BCC1:
                         if (receivedByte == FLAG)
@@ -150,22 +166,58 @@ int llopen(LinkLayer connectionParameters)
                             machineState = START;
                         break;
                     default:
+                        machineState = START;
                         break;
                     }
                 }
             }
 
-            retransmissions--; // Reduz o número de retransmissões
+            alarm(0);
+
+            if(machineState == STOP) {
+                printf("Transmissor: Quadro UA recebido com sucesso\n");
+                break;
+            }
+
+            else if(alarmFired) {
+                printf("Transmissor: timeout. Vamos tentar de novo\n");
+                retransmissions--;
+            }
+
+            else{
+                printf("Transmissor: erro a receber UA\n");
+                retransmissions--;
+            }
+
         }
-        if (machineState != STOP)
+
+        if (retransmissions == 0) {
+            printf("Transmissor: número máximo de retransmissões atingido. Abortando conexão.\n");
             return -1;
+        }
         break;
 
     case LlRx:
-        while (machineState != STOP)
+    {
+        printf("Receptor: aguardando quadro SET...\n");
+
+        // Configura o manipulador de sinal para o alarme
+        (void)signal(SIGALRM, alarmHandler);
+
+        // Define o timeout para o receptor (por exemplo, 3 segundos)
+        int receiverTimeout = 3;
+        alarmFired = FALSE;
+        alarm(receiverTimeout);
+
+        int errorCount = 0;
+        const int maxErrors = 5;
+
+        while (machineState != STOP && !alarmFired && errorCount < maxErrors)
         {
             if (readByteSerialPort(&receivedByte) > 0)
-            { // Corrigido o parêntesis aqui
+            {
+                printf("Receptor: byte recebido: 0x%02X\n", receivedByte);
+
                 switch (machineState)
                 {
                 case START:
@@ -175,14 +227,26 @@ int llopen(LinkLayer connectionParameters)
                 case F:
                     if (receivedByte == A_ER)
                         machineState = A;
+                    else if (receivedByte != FLAG)
+                        machineState = START;
                     break;
                 case A:
                     if (receivedByte == C_SET)
                         machineState = C;
+                    else if (receivedByte == FLAG)
+                        machineState = F;
+                    else
+                        machineState = START;
                     break;
                 case C:
                     if (receivedByte == (A_ER ^ C_SET))
                         machineState = BCC1;
+                    else
+                    {
+                        printf("Receptor: BCC1 incorreto. Descartando quadro.\n");
+                        machineState = START;
+                        errorCount++;
+                    }
                     break;
                 case BCC1:
                     if (receivedByte == FLAG)
@@ -191,18 +255,47 @@ int llopen(LinkLayer connectionParameters)
                         machineState = START;
                     break;
                 default:
+                    printf("Receptor: estado desconhecido.\n");
+                    machineState = START;
+                    errorCount++;
                     break;
                 }
             }
+            else
+            {
+                printf("Receptor: falha na leitura do byte.\n");
+                errorCount++;
+            }
         }
-        sendSupervisionFrame(fd, A_RE, C_UA); // Enviar quadro de supervisão de resposta
-        break;
 
+        alarm(0); // Cancela o alarme
+
+        if (alarmFired)
+        {
+            printf("Receptor: timeout ao esperar pelo quadro SET.\n");
+            return -1;
+        }
+
+        if (errorCount >= maxErrors)
+        {
+            printf("Receptor: número máximo de erros atingido. Abortando conexão.\n");
+            return -1;
+        }
+
+        printf("Receptor: quadro SET recebido com sucesso.\n");
+
+        // Envia o quadro UA em resposta
+        sendSupervisionFrame(fd, A_RE, C_UA);
+        printf("Receptor: quadro UA enviado.\n");
+
+        break;
+    }
     default:
+        printf("Erro: papel desconhecido na conexão.\n");
         return -1;
     }
 
-    return fd; // Retorna o descritor de arquivo da conexão bem-sucedida
+    return fd;
 }
 
 /////////////////////////////////////////////////////
