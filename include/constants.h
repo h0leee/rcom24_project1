@@ -47,7 +47,7 @@ void displayStatistics();
 
 unsigned char getControlFrame(int fd);
 
-int byteStuffing(const unsigned char* inputMsg, int inputSize, unsigned char* outputMessage);
+int byteStuffing(const unsigned char* inputMsg, int inputSize, unsigned char* outputMsg, unsigned char bcc2);
 
 
 unsigned char getControlField(FrameType frameType, int sequenceNumber) {
@@ -69,13 +69,13 @@ unsigned char getControlField(FrameType frameType, int sequenceNumber) {
     }
 }
 
-void cleanBuffer(unsigned char* buffer, int bufferSize) {
-    memset(0, buffer, bufferSize);
+void cleanBuffer(unsigned char* buffer, int bufferSize, int* dataSize ) {
+    memset(buffer, 0, bufferSize);
+
+    *dataSize = 0;
 }
 
 
 // esta função está mal mas já é um começo 
-
-
 
 #endif 

@@ -33,14 +33,7 @@ LinkLayerRole role;
 int fd;
 int txFrame = 0, rxFrame = 1;
 
-// stats
-int totalFramesSent = 0;
-int totalFramesReceived = 0;
-int totalTimeouts = 0;
-int totalRetransmissions = 0;
-int totalRReceived = 0;
-int totalREJReceived = 0;
-int bcc2InvalidFrame = 0;
+
 
 
 // Alarm function handler
@@ -218,31 +211,44 @@ int llopen(LinkLayer connectionParameters)
 
 // Stuffing e o processo inverso vao ser usados no LLWRITE
 
-int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *outputMsg) {
+
+int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char* outputMsg, unsigned char bcc2) {
     int stuffedSize = 0;
 
-    printf("\nSTUFFING STARTED\n"); // só para debug
-
-    printf("%x\n", outputMsg[stuffedSize - 1]);
+    printf("\nSTUFFING STARTED\n"); // Debug
 
     for (int i = 0; i < inputSize; i++) {
-        if (stuffedSize + 2 > MAX_PAYLOAD_SIZE) {
-            fprintf(stderr, "Output buffer overflow in byteStuffing\n");
-            return -1;
-        }
         if (inputMsg[i] == FLAG || inputMsg[i] == ESC) {
+            // Precisa de 2 bytes para stuffing
+            if (stuffedSize + 2 > MAX_PAYLOAD_SIZE) {
+                fprintf(stderr, "Output buffer overflow in byteStuffing\n");
+                return -1;
+            }
             outputMsg[stuffedSize++] = ESC;
-            outputMsg[stuffedSize++] = inputMsg[i] ^ 0x20;
+            outputMsg[stuffedSize++] = inputMsg[i] ^ 0x02;
         } else {
-            if(stuffedSize + 1 > MAX_PAYLOAD_SIZE) {
-                printf("Buffer de saída excedido a fazer byte stuffing\n");
+            // Precisa de 1 byte
+            if (stuffedSize + 1 > MAX_PAYLOAD_SIZE) {
+                fprintf(stderr, "Output buffer overflow in byteStuffing\n");
                 return -1;
             }
             outputMsg[stuffedSize++] = inputMsg[i];
         }
     }
+
+    if(bcc2 == FLAG || bcc2 == ESC) {
+        if (stuffedSize + 2 > MAX_PAYLOAD_SIZE) {
+                fprintf(stderr, "Output buffer overflow in byteStuffing\n");
+                return -1;
+            }
+            outputMsg[stuffedSize++] = ESC;
+            outputMsg[stuffedSize++] = bcc2 ^ 0x02;
+    }
+
     return stuffedSize;
 }
+
+
 
 
 
@@ -295,119 +301,107 @@ unsigned char computeBCC2(const unsigned char *buffer, size_t length)
 // LLWRITE
 ////////////////////////////////////////////////
 
-int llwrite(const unsigned char *buf, int bufSize)
-{
+int llwrite(const unsigned char *buf, int bufSize) {
+    // no llwrite recebo um packet ou a parte da payload de uma frame apenas? 
+
+    // antes de chamar construção, eu deveria saber qual o tamanho 
+    // o bcc2 tmb pode ser necessário dar stuff
+    // mas o payload é de certeza 
 
     
-
-    int totalSize = bufSize + 6;    // tamanho total do frame, payload e 6 bytes adicionais
-    unsigned char frame[totalSize]; // variável para armazenar o frame antes do stuffing
-
-    // limpar o buffer
-    cleanBuffer(buf, totalSize);
-
-    // frame sem qualquer FLAG
-    
-    frame[0] = A_ER;
-    frame[1] = C_N(txFrame);
-    frame[2] = frame[0] ^ frame[1]; // BCC1
-    memcpy(&frame[3], buf, bufSize);
-    frame[3 + bufSize] = computeBCC2(buf, bufSize); // BCC2
-
-    // Aplicar byte stuffing ao campo de dados e BCC2
-    int frameSize = 4 + bufSize; // A_ER + C + BCC1 + Dados + BCC2
-    unsigned char stuffedFrame[MAX_PAYLOAD_SIZE];
-    int stuffedSize = byteStuffing(frame, frameSize, stuffedFrame);
-
-    // Agora adicionar as FLAGs
-    unsigned char finalFrame[MAX_PAYLOAD_SIZE];
-    finalFrame[0] = FLAG;
-    memcpy(&finalFrame[1], stuffedFrame, stuffedSize);
-    finalFrame[stuffedSize + 1] = FLAG;
-    int totalSize = stuffedSize + 2; // FLAGS adicionadas
+    unsigned char bcc2 =  computeBCC2(buf, bufSize); // BCC2, sem byteStuffing 
 
 
-    STOP = FALSE;
-    alarmFired = FALSE;
-    alarmCount = 0;
+    unsigned char stuffedPayload[bufSize*2 + 2]; // i know, exagerado, mas assim não há erros, este +2 é para bcc2
+    int stuffedPayloadSize = byteStuffing(buf, bufSize, stuffedPayload, bcc2); // aqui terei a length do bytestuffing da payload com bcc2
+
+    unsigned char fullFrame[stuffedPayloadSize + 5]; // stuffed e 5 bytes adicionais (f, a, c, bcc1, f)
+    int totalSize = stuffedPayloadSize + 4;
+    unsigned char fullFrame[totalSize];
+
     int attemptCounter = 0;
-    int failedTransmission = 0, successfulTransmission = 0;
+    int successfulTransmission = 0;
+    int failedTransmission = 0;
 
-    while (attemptCounter < numberRetransmissions) // Tenta até ao limite de retransmissões
-    {
+    while (attemptCounter < numberRetransmissions) {
+        // Limpa o stuffedFrame antes de cada tentativa de stuffing
+        // está exagerado este size, i know 
+        cleanBuffer(fullFrame, totalSize, NULL);
+        cleanBuffer(stuffedPayload, stuffedPayloadSize, NULL);
 
-        cleanBuffer(buf, bufSize);
+        fullFrame[0] = F;
+        fullFrame[1] = A_ER;
+        fullFrame[2] = C_N(txFrame);
+        fullFrame[3] = fullFrame[1] ^ fullFrame[2];
 
-        alarmFired = FALSE;
-        alarm(timeOut); // Define o temporizador
 
-        failedTransmission = 0;
-        successfulTransmission = 0;
+        // Executa o byte stuffing no payload e no bcc2
+        stuffedPayloadSize = byteStuffing(buf, bufSize, stuffedPayload, bcc2);
+        if (stuffedPayloadSize == -1) {
+            fprintf(stderr, "Erro no byte stuffing\n");
+            return -1;
+        }
 
-        int bytesWritten = writeBytesSerialPort(stuffedFrame, totalSize);
-        if (bytesWritten < 0)
+
+        for (size_t i = 4; i < stuffedPayloadSize + 4; i++)
         {
+            fullFrame[i] = stuffedPayload[i-4];
+        }
+
+        fullFrame[4 + stuffedPayloadSize] = FLAG;
+
+        STOP = FALSE;
+        alarmFired = FALSE;
+        alarm(timeOut);               // Define o temporizador
+
+        int bytesWritten = writeBytesSerialPort(fullFrame, totalSize); // isto pode estar mal 
+        if (bytesWritten < 0) {
             perror("Erro ao escrever o frame");
-            cleanBuffer(buf, bufSize);
             continue; // Tenta novamente
         }
 
-        // isto parece mal
-        while (!failedTransmission && !successfulTransmission && !alarmFired)
-        {
+        // Verifica se a transmissão foi bem-sucedida
+        while (!successfulTransmission && !alarmFired && !failedTransmission) {
             int result = getControlFrame(fd);
-
-            if (result == -1)
-                continue;
-
-            else if (result == C_REJ(0) || result == C_REJ(1)) {
+            if (result == C_REJ(0) || result == C_REJ(1)) {
                 failedTransmission = 1;
-                totalREJReceived++;
-                }
-
-            else if (result == C_RR(0) || result == C_RR(1))
-            {
+            }
+            else if (result == C_RR(0) || result == C_RR(1)) {
                 successfulTransmission = 1;
-                totalFramesSent++;
-                txFrame = (txFrame + 1) % 2; // Alterna o frameSequence entre 0 e 1
+                txFrame = (txFrame + 1) % 2; // Alterna o número de sequência
             }
         }
 
-        if (successfulTransmission)
-            break; // Se bem-sucedido, sai do loop
+        if (successfulTransmission) break;
         attemptCounter++;
     }
 
-    cleanBuffer(buf, bufSize);
+    cleanBuffer(fullFrame, totalSize, NULL);
+    cleanBuffer(stuffedPayload, stuffedPayloadSize, NULL);
 
-    if (!successfulTransmission)
-    { // Se todas as tentativas falharam
-        printf("passou as tentativas possíveis de escrever");
+    if (!successfulTransmission) {
+        printf("Número máximo de tentativas atingido\n");
         llclose(fd);
         return -1;
     }
 
-    printf("Data Successfully Accepted!\n"); // debug
+    printf("Dados aceites com sucesso!\n"); // Debug
     return 0;
 }
 
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
-int llread(unsigned char *packet)
-{
-    unsigned char receivedByte, cByte;
+int llread(unsigned char *packet) {
+    unsigned char receivedByte, cByte; // cByte corresponde ao C
     LinkLayerState machineState = START;
-    int frameIndex = 0;
-    unsigned char bcc2;
+    int frameIndex = 0; // index do packet que estou a ler
+    unsigned char bcc2; // para depois ter método de comparação
 
-    while (1)
-    {
-        if (readByteSerialPort(&receivedByte) > 0)
-        {
+    while (1) {
+        if (readByteSerialPort(&receivedByte) > 0) {
 
-            switch (machineState)
-            {
+            switch (machineState) {
                 case START:
                     if (receivedByte == FLAG)
                         machineState = F;
@@ -418,23 +412,18 @@ int llread(unsigned char *packet)
                         machineState = A;
                     else if (receivedByte != FLAG)
                         machineState = START;
-                    // Se receivedByte == FLAG, permanece no estado F
                     break;
 
                 case A:
-                    if (receivedByte == C_N(0) || receivedByte == C_N(1))
-                    {
+                    if (receivedByte == C_N(0) || receivedByte == C_N(1)) {
                         machineState = C;
                         cByte = receivedByte;
-                    }
-                    else if (receivedByte == FLAG)
+                    } else if (receivedByte == FLAG)
                         machineState = F;
-                    else if (receivedByte == C_DISC)
-                    {
+                    else if (receivedByte == C_DISC) {
                         sendSupervisionFrame(fd, A_RE, C_DISC);
                         return 0; // Indica desconexão
-                    }
-                    else
+                    } else
                         machineState = START;
                     break;
 
@@ -448,63 +437,30 @@ int llread(unsigned char *packet)
                     break;
 
                 case BCC1:
-                    if (receivedByte == FLAG)
-                    {
+                    if (receivedByte == FLAG) {
                         // Frame inválido, no data
-                        machineState = START;
+                        machineState = F;
                         frameIndex = 0;
-                    }
-                    else if (receivedByte == ESC)
-                    {
+                    } else if (frameIndex >= MAX_PAYLOAD_SIZE) {
+                        perror("[LLREAD] OVERFLOW NO BUFFER DE DADOS");
+                        sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
+                        clean_buffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
+                        machineState = START;
+                        continue;
+                    } else if (receivedByte == ESC) {
                         machineState = ESC_FOUND;
-                    }
-                    else
-                    {
-                        // Armazena o byte de dados
-                        if (frameIndex < MAX_PAYLOAD_SIZE)
-                        {
-                            packet[frameIndex++] = receivedByte;
-                        }
-                        else
-                        {
-                            printf("Erro: buffer de pacote excedido.\n");
-                            machineState = START;
-                            frameIndex = 0;
-                        }
+                    } else {
+                        packet[frameIndex++] = receivedByte;
                     }
                     break;
 
                 case ESC_FOUND:
-                    machineState = BCC1; // Retorna ao estado BCC1 após tratar o escape
-
-                    if (receivedByte == 0x5E) // FLAG escapado
-                    {
-                        if (frameIndex < MAX_PAYLOAD_SIZE)
-                        {
-                            packet[frameIndex++] = FLAG;
-                        }
-                        else
-                        {
-                            printf("Erro: buffer de pacote excedido.\n");
-                            machineState = START;
-                            frameIndex = 0;
-                        }
-                    }
-                    else if (receivedByte == 0x5D) // ESC escapado
-                    {
-                        if (frameIndex < MAX_PAYLOAD_SIZE)
-                        {
-                            packet[frameIndex++] = ESC;
-                        }
-                        else
-                        {
-                            printf("Erro: buffer de pacote excedido.\n");
-                            machineState = START;
-                            frameIndex = 0;
-                        }
-                    }
-                    else
-                    {
+                    machineState = BCC1;
+                    if (receivedByte == 0x5E) { // FLAG escapado
+                        packet[frameIndex++] = FLAG;
+                    } else if (receivedByte == 0x5D) { // ESC escapado
+                        packet[frameIndex++] = ESC;
+                    } else {
                         printf("Erro: sequência de escape inválida.\n");
                         machineState = START;
                         frameIndex = 0;
@@ -517,46 +473,32 @@ int llread(unsigned char *packet)
                     break;
             }
 
-            // Verifica se a FLAG final foi recebida no estado BCC1
-            if (machineState == BCC1 && receivedByte == FLAG)
-            {
-                // Recebeu FLAG final
-                if (frameIndex < 1)
-                {
+            if (machineState == BCC1 && receivedByte == FLAG) {
+                if (frameIndex < 1) {
                     printf("Erro: Nenhum dado recebido antes da FLAG final.\n");
                     machineState = START;
                     frameIndex = 0;
                     continue;
                 }
 
-                // O último byte recebido é o BCC2
                 bcc2 = packet[frameIndex - 1];
-                frameIndex--; // Exclui o BCC2 dos dados
+                frameIndex--;
 
-                // Calcula o BCC2 dos dados recebidos
                 unsigned char calculatedBCC2 = computeBCC2(packet, frameIndex);
 
-                if (calculatedBCC2 == bcc2)
-                {
-                    totalFramesReceived++;
+                if (calculatedBCC2 == bcc2) {
                     sendSupervisionFrame(fd, A_RE, C_RR(rxFrame));
                     rxFrame = (rxFrame + 1) % 2;
-                    return frameIndex; // Retorna o número de bytes de dados recebidos
-                }
-                else
-                {
-                    // limpar o buffer packet
-                    cleanBuffer(packet, MAX_PAYLOAD_SIZE);
+                    return frameIndex;
+                } else {
+                    clean_buffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
 
-                    // limpar o buffer da porta serial
-                    if(tcflush(fd, TCIFLUSH) == -1) {
+                    if (tcflush(fd, TCIFLUSH) == -1) {
                         perror("falha ao limpar buffer de serial port");
                     }
 
-
                     printf("Erro: BCC2 inválido. Necessária retransmissão.\n");
                     sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
-                    bcc2InvalidFrame++;
                     machineState = START;
                     frameIndex = 0;
                     continue;
