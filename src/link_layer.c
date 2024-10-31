@@ -303,21 +303,15 @@ unsigned char computeBCC2(const unsigned char *buffer, size_t length)
 
 int llwrite(const unsigned char *buf, int bufSize) {
     // no llwrite recebo um packet ou a parte da payload de uma frame apenas? 
-
-    // antes de chamar construção, eu deveria saber qual o tamanho 
-    // o bcc2 tmb pode ser necessário dar stuff
-    // mas o payload é de certeza 
-
     
     unsigned char bcc2 =  computeBCC2(buf, bufSize); // BCC2, sem byteStuffing 
 
 
-    unsigned char stuffedPayload[bufSize*2 + 2]; // i know, exagerado, mas assim não há erros, este +2 é para bcc2
+    unsigned char stuffedPayload[MAX_PAYLOAD_SIZE];
     int stuffedPayloadSize = byteStuffing(buf, bufSize, stuffedPayload, bcc2); // aqui terei a length do bytestuffing da payload com bcc2
 
-    unsigned char fullFrame[stuffedPayloadSize + 5]; // stuffed e 5 bytes adicionais (f, a, c, bcc1, f)
-    int totalSize = stuffedPayloadSize + 4;
-    unsigned char fullFrame[totalSize];
+    int totalSize = stuffedPayloadSize + 5; // stuffed e 5 bytes adicionais (f, a, c, bcc1, f)
+    unsigned char fullFrame[totalSize]; 
 
     int attemptCounter = 0;
     int successfulTransmission = 0;
