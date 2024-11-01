@@ -2,6 +2,7 @@
 #define _CONSTANTS_H_
 
 #include <stdio.h>
+#include <string.h>
 
 #define BAUDRATE 38400
 #define FLAG 0x7E

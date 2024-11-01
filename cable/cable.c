@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <termios.h>
 #include <time.h>
+#include <sched.h>
 #include <unistd.h>
 
 #define TXDEV "/dev/ttyS10"
@@ -132,13 +133,17 @@ void set_baud_rate(unsigned long baud)
 }
 
 
-// Make the program use RT priority to improve precision in timing
 void set_rt_priority(void) {
+#ifdef __linux__
     struct sched_param sp = { .sched_priority = 50 };
     if (sched_setscheduler(0, SCHED_FIFO, &sp) == -1) {
-      perror("Could not set realtime priority");
+        perror("Could not set realtime priority");
     }
+#else
+    printf("Real-time scheduling not supported on this platform.\n");
+#endif
 }
+
 
 
 // Compute the difference between two timespecs

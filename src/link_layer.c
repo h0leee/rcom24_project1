@@ -545,6 +545,8 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
+
+// START, A, C,  se aparecer uma merda random tenho de mandar o grande rej 
 int llread(unsigned char *packet)
 {
     unsigned char receivedByte, cByte;
@@ -554,6 +556,7 @@ int llread(unsigned char *packet)
 
     while (1)
     {
+        // vou ter de alterar aqui
         if (readByteSerialPort(&receivedByte) > 0)
         {
             switch (machineState)
