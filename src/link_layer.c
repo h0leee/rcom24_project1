@@ -19,7 +19,6 @@
 #include <signal.h>
 #include <time.h>
 
-
 int alarmFired = FALSE;
 int alarmCount = 0;
 int numberRetransmissions = 0;
@@ -172,7 +171,8 @@ int llopen(LinkLayer connectionParameters)
                     case A:
                         if (receivedByte == C_UA)
                             machineState = C;
-                        else if(receivedByte == C_REJ_SET) {
+                        else if (receivedByte == C_REJ_SET)
+                        {
                             printf("TRANSMISSOR: quadro SET rejeitdo");
                             retransmissions--;
                             machineState = START;
@@ -498,7 +498,6 @@ int llwrite(const unsigned char *buf, int bufSize)
 
         fullFrame[4 + stuffedPayloadSize] = FLAG;
 
-
         alarmFired = FALSE;
         alarm(timeOut); // Define o temporizador
 
@@ -548,16 +547,15 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 int llread(unsigned char *packet)
 {
-    unsigned char receivedByte, cByte; // cByte corresponde ao C
+    unsigned char receivedByte, cByte;
     LinkLayerState machineState = START;
-    int frameIndex = 0; // index do packet que estou a ler
-    unsigned char bcc2; // para depois ter método de comparação
+    int frameIndex = 0;
+    unsigned char bcc2;
 
     while (1)
     {
         if (readByteSerialPort(&receivedByte) > 0)
         {
-
             switch (machineState)
             {
             case START:
@@ -583,7 +581,7 @@ int llread(unsigned char *packet)
                 else if (receivedByte == C_DISC)
                 {
                     sendSupervisionFrame(fd, A_RE, C_DISC);
-                    return 0; // Indica desconexão
+                    return 0;
                 }
                 else
                     machineState = START;
@@ -601,13 +599,45 @@ int llread(unsigned char *packet)
             case BCC1:
                 if (receivedByte == FLAG)
                 {
-                    // Frame inválido, no data
-                    machineState = F;
-                    frameIndex = 0;
+                    if (frameIndex < 1)
+                    {
+                        printf("Erro: Nenhum dado recebido antes da FLAG final.\n");
+                        machineState = START;
+                        frameIndex = 0;
+                        continue;
+                    }
+
+                    bcc2 = packet[frameIndex - 1];
+                    frameIndex--;
+                    packet[frameIndex] = '\0'; // para anular o bcc2 no packet
+
+                    unsigned char calculatedBCC2 = computeBCC2(packet, frameIndex);
+
+                    if (calculatedBCC2 == bcc2)
+                    {
+                        sendSupervisionFrame(fd, A_RE, C_RR(rxFrame));
+                        rxFrame = (rxFrame + 1) % 2;
+                        return frameIndex;
+                    }
+                    else
+                    {
+                        cleanBuffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
+
+                        if (tcflush(fd, TCIFLUSH) == -1)
+                        {
+                            perror("falha ao limpar buffer de serial port");
+                        }
+
+                        printf("Erro: BCC2 inválido. Necessária retransmissão.\n");
+                        sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
+                        machineState = START;
+                        frameIndex = 0;
+                        continue;
+                    }
                 }
                 else if (frameIndex >= MAX_PAYLOAD_SIZE)
                 {
-                    perror("[LLREAD] OVERFLOW NO BUFFER DE DADOS");
+                    perror("[LLREAD] Overflow no buffer de dados");
                     sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
                     cleanBuffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
                     machineState = START;
@@ -626,11 +656,11 @@ int llread(unsigned char *packet)
             case ESC_FOUND:
                 machineState = BCC1;
                 if (receivedByte == 0x5E)
-                { // FLAG escapado
+                {
                     packet[frameIndex++] = FLAG;
                 }
                 else if (receivedByte == 0x5D)
-                { // ESC escapado
+                {
                     packet[frameIndex++] = ESC;
                 }
                 else
@@ -646,48 +676,10 @@ int llread(unsigned char *packet)
                 frameIndex = 0;
                 break;
             }
-
-            if (machineState == BCC1 && receivedByte == FLAG)
-            {
-                if (frameIndex < 1)
-                {
-                    printf("Erro: Nenhum dado recebido antes da FLAG final.\n");
-                    machineState = START;
-                    frameIndex = 0;
-                    continue;
-                }
-
-                bcc2 = packet[frameIndex - 1];
-                frameIndex--;
-
-                unsigned char calculatedBCC2 = computeBCC2(packet, frameIndex);
-
-                if (calculatedBCC2 == bcc2)
-                {
-                    sendSupervisionFrame(fd, A_RE, C_RR(rxFrame));
-                    rxFrame = (rxFrame + 1) % 2;
-                    return frameIndex;
-                }
-                else
-                {
-                    cleanBuffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
-
-                    if (tcflush(fd, TCIFLUSH) == -1)
-                    {
-                        perror("falha ao limpar buffer de serial port");
-                    }
-
-                    printf("Erro: BCC2 inválido. Necessária retransmissão.\n");
-                    sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
-                    machineState = START;
-                    frameIndex = 0;
-                    continue;
-                }
-            }
         }
     }
 
-    return -1; // Erro caso o loop termine sem receber a FLAG final
+    return -1;
 }
 
 ////////////////////////////////////////////////
