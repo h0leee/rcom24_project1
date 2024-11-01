@@ -299,7 +299,7 @@ int main(int argc, char *argv[])
     struct termios oldtioTx;
     struct termios newtioTx;
 
-    int fdTx = openSerialPort("/dev/emulatorTx", &oldtioTx, &newtioTx);
+    int fdTx = openSerialPort(tx_dev, &oldtioTx, &newtioTx);
 
     if (fdTx < 0)
     {
@@ -310,7 +310,7 @@ int main(int argc, char *argv[])
     struct termios oldtioRx;
     struct termios newtioRx;
 
-    int fdRx = openSerialPort("/dev/emulatorRx", &oldtioRx, &newtioRx);
+    int fdRx = openSerialPort(rx_dev, &oldtioRx, &newtioRx);
 
     if (fdRx < 0)
     {
