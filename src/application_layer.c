@@ -39,7 +39,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         if (file == NULL) {
             perror("Failed to open file for reading");
             llclose(0);
-            exit(EXIT_FAILURE);
+            exit(-1);
         }
 
         // Get file size
@@ -97,7 +97,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
         fclose(file);
     } else {
-        // Receiver
+        // Receiverx§
         FILE *file = NULL;
         unsigned char packet[MAX_DATA_SIZE + 4];
         int done = 0;

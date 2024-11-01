@@ -1,11 +1,7 @@
 // Link layer protocol implementation
 
 // depois poderei tentar modular o código da stateMachine
-// stateMachine, getControlPacket, displayStatistics
-// bcc2 sem stuffing e depois colocar stuffing nele !!!
-// limpar sempre o buffer, SEMPRE MESMO
-// memset(0, buffer, bufferSize)
-// bufferSize = 0
+// stateMachine, displayStatistics
 // no read, o receiver tem de perceber que pode receber disc, se ultrapassar o limite de transmissões
 
 #include "link_layer.h"
@@ -23,7 +19,7 @@
 #include <signal.h>
 #include <time.h>
 
-volatile int STOP = FALSE;
+
 int alarmFired = FALSE;
 int alarmCount = 0;
 int numberRetransmissions = 0;
@@ -502,7 +498,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 
         fullFrame[4 + stuffedPayloadSize] = FLAG;
 
-        STOP = FALSE;
+
         alarmFired = FALSE;
         alarm(timeOut); // Define o temporizador
 
@@ -613,7 +609,7 @@ int llread(unsigned char *packet)
                 {
                     perror("[LLREAD] OVERFLOW NO BUFFER DE DADOS");
                     sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
-                    clean_buffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
+                    cleanBuffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
                     machineState = START;
                     continue;
                 }
@@ -674,7 +670,7 @@ int llread(unsigned char *packet)
                 }
                 else
                 {
-                    clean_buffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
+                    cleanBuffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
 
                     if (tcflush(fd, TCIFLUSH) == -1)
                     {
