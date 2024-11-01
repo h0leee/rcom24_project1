@@ -18,8 +18,9 @@
 #include <sched.h>
 #include <unistd.h>
 
-#define TXDEV "/dev/ttyS10"
-#define RXDEV "/dev/ttyS11"
+char tx_dev[64];
+char rx_dev[64];
+
 // Baudrate settings are defined in <asm/termbits.h>, which is
 // included by <termios.h>
 #define BAUDRATE B9600         // For struct termios
@@ -55,6 +56,28 @@ struct Parameters par = {
     .rx2tx = NULL,
     .rx2txValid = NULL,
     .logfile = NULL};
+
+
+void start_socat() {
+    FILE *fp = popen("socat -dd PTY,raw,echo=0 PTY,raw,echo=0", "r");
+    if (fp == NULL) {
+        perror("Failed to start socat");
+        exit(1);
+    }
+
+    while (fgets(tx_dev, sizeof(tx_dev), fp) != NULL) {
+        if (strstr(tx_dev, "PTY is")) {
+            sscanf(tx_dev, "2024/11/01 %*s PTY is %63s", tx_dev);
+            if (fgets(rx_dev, sizeof(rx_dev), fp) && strstr(rx_dev, "PTY is")) {
+                sscanf(rx_dev, "2024/11/01 %*s PTY is %63s", rx_dev);
+                break;
+            }
+        }
+    }
+    pclose(fp);
+}
+
+
 
 // Returns: serial port file descriptor (fd).
 int openSerialPort(const char *serialPort, struct termios *oldtio, struct termios *newtio)
@@ -228,12 +251,11 @@ void startlog(const char *filename)
 }
 
 
-// Show help
 void help()
 {
     printf("\n\n"
-           "Transmitter must open " TXDEV "\n"
-           "Receiver must open " RXDEV "\n"
+           "Transmitter must open %s\n"
+           "Receiver must open %s\n"
            "\n"
            "The cable program is sensible to the following interactive commands:\n"
            "--- help         : show this help\n"
@@ -251,18 +273,24 @@ void help()
            "\n"
            "IMPORTANT: Changing the baud rate or propagation delay while a transmission is\n"
            "           ongoing will result in losses.\n"
-           "\n");
+           "\n", tx_dev, rx_dev);
 }
+
 
 int main(int argc, char *argv[])
 {
     printf("\n");
+    start_socat();
 
-    system("socat -dd PTY,link=" TXDEV ",mode=777,raw,echo=0 PTY,link=/dev/emulatorTx,mode=777,raw,echo=0 &");
+    char cmd[128];
+
+    sprintf(cmd, "socat -dd PTY,link=%s,mode=777,raw,echo=0 PTY,link=/dev/emulatorTx,mode=777,raw,echo=0 &", tx_dev);
+    system(cmd);
     sleep(1);
     printf("\n");
 
-    system("socat -dd PTY,link=" RXDEV ",mode=777,raw,echo=0 PTY,link=/dev/emulatorRx,mode=777,raw,echo=0 &");
+    sprintf(cmd, "socat -dd PTY,link=%s,mode=777,raw,echo=0 PTY,link=/dev/emulatorRx,mode=777,raw,echo=0 &", rx_dev);
+    system(cmd);
     sleep(1);
 
     help();
