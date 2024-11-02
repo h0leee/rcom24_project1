@@ -170,7 +170,7 @@ int llopen(LinkLayer connectionParameters)
                         else
                         {
                             machineState = START;
-                            printf("[llopen][Transmissor] Byte inesperado no estado F: 0x%02X | Voltando para START\n");
+                            printf("[llopen][Transmissor] Byte inesperado no estado F: 0x%02X | Voltando para START\n", receivedByte);
                         }
                         break;
                     case A:
