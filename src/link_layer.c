@@ -1,12 +1,9 @@
-// Link layer protocol implementation
-
-// depois poderei tentar modular o código da stateMachine
-// stateMachine, displayStatistics
-// no read, o receiver tem de perceber que pode receber disc, se ultrapassar o limite de transmissões
 
 #include "link_layer.h"
 #include "serial_port.h"
 #include "constants.h"
+#include <stdio.h>
+#include <stdlib.h>
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -27,6 +24,16 @@ LinkLayerState machineState;
 LinkLayerRole role;
 int fd;
 int txFrame = 0, rxFrame = 1;
+
+void cleanBuffer(unsigned char* buffer, int bufferSize, int* dataSize) {
+    if (buffer == NULL || dataSize == NULL || bufferSize <= 0) {
+        return;
+    }
+
+    memset(buffer, 0, bufferSize);
+    *dataSize = 0;
+}
+
 
 int sendRejectionFrame(int fd, unsigned char address, unsigned char control)
 {
@@ -360,8 +367,7 @@ unsigned char computeBCC2(const unsigned char *buffer, size_t length)
 // LLWRITE
 ////////////////////////////////////////////////
 
-int llwrite(const unsigned char *buf, int bufSize)
-{
+int llwrite(const unsigned char *buf, int bufSize) {
     if (bufSize * 2 > MAX_PAYLOAD_SIZE) {
         fprintf(stderr, "Erro: Payload excede o tamanho máximo permitido após byte stuffing\n");
         return -1;
@@ -372,8 +378,6 @@ int llwrite(const unsigned char *buf, int bufSize)
     unsigned char stuffedPayload[MAX_PAYLOAD_SIZE];
     int stuffedPayloadSize = byteStuffing(buf, bufSize, stuffedPayload, bcc2);
 
-
-
     if (stuffedPayloadSize == -1) {
         fprintf(stderr, "Erro no byte stuffing\n");
         return -1;
@@ -383,51 +387,56 @@ int llwrite(const unsigned char *buf, int bufSize)
     printf("Stuffed Payload Size: %d\n", stuffedPayloadSize);
     printf("Total Size (with headers): %d\n", totalSize);
 
-    if(totalSize > MAX_PAYLOAD_SIZE) {
+    if (totalSize > MAX_PAYLOAD_SIZE) {
         fprintf(stderr, "Erro: Total size após stuffing excede o limite\n");
         return -1;
     }
-    unsigned char fullFrame[totalSize];
+
+    // Aloca memória dinamicamente para fullFrame
+    unsigned char *fullFrame = malloc(totalSize);
+    if (fullFrame == NULL) {
+        fprintf(stderr, "Erro de alocação de memória para fullFrame\n");
+        return -1;
+    }
+
+    // Prepara o cabeçalho da trama
+    fullFrame[0] = FLAG;
+    fullFrame[1] = A_ER;
+    fullFrame[2] = C_N(txFrame);
+    fullFrame[3] = fullFrame[1] ^ fullFrame[2];
+
+    // Copia o payload "stuffed" para a frame completa
+    for (int i = 0; i < stuffedPayloadSize; i++) {
+        fullFrame[i + 4] = stuffedPayload[i];
+    }
+
+    // Define o FLAG final da frame
+    fullFrame[4 + stuffedPayloadSize] = FLAG;
 
     int attemptCounter = 0;
     int successfulTransmission = 0;
     int failedTransmission = 0;
 
-    while (attemptCounter < numberRetransmissions)
-    {
+    while (attemptCounter < numberRetransmissions) {
         cleanBuffer(fullFrame, totalSize, NULL);
-
-        fullFrame[0] = F;
-        fullFrame[1] = A_ER;
-        fullFrame[2] = C_N(txFrame);
-        fullFrame[3] = fullFrame[1] ^ fullFrame[2];
-
-        for (int i = 0; i < stuffedPayloadSize; i++) {
-            fullFrame[i + 4] = stuffedPayload[i];
-        }
-
-        fullFrame[4 + stuffedPayloadSize] = FLAG;
 
         alarmFired = FALSE;
         alarm(timeOut);
 
+        printf("Tentativa de transmissão #%d\n", attemptCounter + 1);
+
         int bytesWritten = writeBytesSerialPort(fullFrame, totalSize);
-        if (bytesWritten < 0)
-        {
+        if (bytesWritten < 0) {
             perror("Erro ao escrever o frame");
             attemptCounter++;
             continue;
         }
 
-        while (!successfulTransmission && !alarmFired && !failedTransmission)
-        {
+        while (!successfulTransmission && !alarmFired && !failedTransmission) {
             int result = getControlFrame(fd);
-            if (result == C_REJ(0) || result == C_REJ(1))
-            {
+            if (result == C_REJ(0) || result == C_REJ(1)) {
                 failedTransmission = 1;
-            }
-            else if (result == C_RR(0) || result == C_RR(1))
-            {
+            } else if (result == C_RR(0) || result == C_RR(1)) {
                 successfulTransmission = 1;
                 txFrame = (txFrame + 1) % 2;
             }
@@ -438,8 +447,10 @@ int llwrite(const unsigned char *buf, int bufSize)
         attemptCounter++;
     }
 
-    if (!successfulTransmission)
-    {
+    // Limpa a memória alocada para evitar vazamento
+    free(fullFrame);
+
+    if (!successfulTransmission) {
         printf("Número máximo de tentativas atingido\n");
         llclose(fd);
         return -1;
@@ -448,7 +459,6 @@ int llwrite(const unsigned char *buf, int bufSize)
     printf("Dados aceites com sucesso!\n");
     return 0;
 }
-
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////

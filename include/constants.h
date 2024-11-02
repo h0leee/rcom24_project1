@@ -73,12 +73,7 @@ unsigned char getControlField(FrameType frameType, int sequenceNumber) {
     }
 }
 
-void cleanBuffer(unsigned char* buffer, int bufferSize, int* dataSize ) {
-    memset(buffer, 0, bufferSize);
-
-    *dataSize = 0;
-}
-
+void cleanBuffer(unsigned char* buffer, int bufferSize, int* dataSize );
 
 // esta função está mal mas já é um começo 
 
