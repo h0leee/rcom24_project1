@@ -118,12 +118,14 @@ int llopen(LinkLayer connectionParameters)
     numberRetransmissions = connectionParameters.nRetransmissions;
     role = connectionParameters.role;
 
-    if (role == LlTx) {
+    if (role == LlTx)
+    {
         printf("[llopen] Modo Transmissor\n");
         signal(SIGALRM, alarmHandler);
 
         int attempts = 0;
-        while (attempts < numberRetransmissions) {
+        while (attempts < numberRetransmissions)
+        {
             printf("[llopen] Tentativa %d de %d\n", attempts + 1, numberRetransmissions);
             machineState = START;
             sendSupervisionFrame(fd, A_ER, C_SET);
@@ -133,52 +135,68 @@ int llopen(LinkLayer connectionParameters)
             alarm(timeOut);
             printf("[llopen] Alarme configurado para %d segundos\n", timeOut);
 
-            while (machineState != STOP && !alarmFired) {
-                receivedByte = 0; // Limpar byte recebido
+            while (machineState != STOP && !alarmFired)
+            {
+                receivedByte = 0;
 
                 int bytesRead = readByteSerialPort(&receivedByte);
-                if (bytesRead > 0) {
-                    printf("[llopen][Transmissor] Byte recebido: 0x%02X | Estado atual: %d\n", receivedByte, machineState);
-
-                    switch (machineState) {
+                if (bytesRead > 0)
+                {
+                    switch (machineState)
+                    {
                     case START:
-                        if (receivedByte == FLAG) machineState = F;
+                        if (receivedByte == FLAG)
+                            machineState = F;
+                        else
+                            machineState = START;
                         break;
                     case F:
-                        if (receivedByte == A_RE) machineState = A;
-                        else if (receivedByte != FLAG) machineState = START;
+                        if (receivedByte == A_RE)
+                            machineState = A;
+                        else if (receivedByte == FLAG)
+                            machineState = F;
+                        else
+                            machineState = START;
                         break;
                     case A:
-                        if (receivedByte == C_UA) machineState = C;
-                        else machineState = START;
+                        if (receivedByte == C_UA)
+                            machineState = C;
+                        else
+                            machineState = START;
                         break;
                     case C:
-                        if (receivedByte == (A_RE ^ C_UA)) machineState = BCC1;
-                        else machineState = START;
+                        if (receivedByte == (A_RE ^ C_UA))
+                            machineState = BCC1;
+                        else
+                            machineState = START;
                         break;
                     case BCC1:
-                        if (receivedByte == FLAG) machineState = STOP;
-                        else machineState = START;
+                        if (receivedByte == FLAG)
+                            machineState = STOP;
+                        else
+                            machineState = START;
                         break;
                     default:
                         machineState = START;
                         break;
                     }
-                } else if (bytesRead == 0) {
-                    printf("[llopen][Transmissor] Nenhum byte lido\n");
-                } else {
+                }
+                else if (bytesRead < 0)
+                {
                     perror("[llopen][Transmissor] Erro ao ler byte");
                     break;
                 }
             }
 
             alarm(0);
-            printf("[llopen][Transmissor] Alarme cancelado\n");
 
-            if (machineState == STOP) {
+            if (machineState == STOP)
+            {
                 printf("[llopen][Transmissor] Quadro UA recebido com sucesso\n");
-                return fd; // Conexão estabelecida
-            } else if (alarmFired) {
+                return fd;
+            }
+            else if (alarmFired)
+            {
                 printf("[llopen][Transmissor] Timeout ocorreu após %d segundos\n", timeOut);
             }
 
@@ -188,9 +206,77 @@ int llopen(LinkLayer connectionParameters)
         printf("[llopen][Transmissor] Número máximo de retransmissões atingido. Abortando conexão.\n");
         return -1;
     }
+    else if (role == LlRx)
+    {
+        printf("[llopen] Modo Receptor\n");
+        printf("[llopen][Receptor] Aguardando quadro SET...\n");
 
-    // Código para o receptor (LlRx) permanece o mesmo, sem alterações.
-    return -1;
+        machineState = START;
+
+        while (machineState != STOP)
+        {
+            receivedByte = 0;
+
+            int bytesRead = readByteSerialPort(&receivedByte);
+
+            if (bytesRead > 0)
+            {
+                switch (machineState)
+                {
+                case START:
+                    if (receivedByte == FLAG)
+                        machineState = F;
+                    else
+                        machineState = START;
+                    break;
+                case F:
+                    if (receivedByte == A_ER)
+                        machineState = A;
+                    else if (receivedByte == FLAG)
+                        machineState = F;
+                    else
+                        machineState = START;
+                    break;
+                case A:
+                    if (receivedByte == C_SET)
+                        machineState = C;
+                    else
+                        machineState = START;
+                    break;
+                case C:
+                    if (receivedByte == (A_ER ^ C_SET))
+                        machineState = BCC1;
+                    else
+                        machineState = START;
+                    break;
+                case BCC1:
+                    if (receivedByte == FLAG)
+                        machineState = STOP;
+                    else
+                        machineState = START;
+                    break;
+                default:
+                    machineState = START;
+                    break;
+                }
+            }
+            else if (bytesRead < 0)
+            {
+                perror("[llopen][Receptor] Erro ao ler byte");
+                return -1;
+            }
+        }
+
+        printf("[llopen][Receptor] Quadro SET recebido com sucesso\n");
+        sendSupervisionFrame(fd, A_RE, C_UA);
+        printf("[llopen][Receptor] Quadro UA enviado\n");
+        return fd;
+    }
+    else
+    {
+        printf("[llopen] Erro: Role desconhecido na conexão.\n");
+        return -1;
+    }
 }
 
 int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *outputMsg, unsigned char bcc2)
