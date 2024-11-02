@@ -632,7 +632,12 @@ int llclose(int showStatistics)
         // Transmissor: inicia desconexão
         while (retransmissions > 0 && machineState != STOP)
         {
-            sendSupervisionFrame(fd, A_ER, C_DISC); // Envia DISC
+            if (sendSupervisionFrame(fd, A_ER, C_DISC) == -1) {
+                perror("Erro ao enviar DISC");
+                retransmissions--;
+                continue;
+            }
+
             alarm(timeOut);
             alarmFired = FALSE;
 
@@ -681,18 +686,22 @@ int llclose(int showStatistics)
                     }
                 }
             }
+
+            alarm(0); // Cancela o alarme após receber a resposta
             retransmissions--;
         }
 
         if (machineState != STOP)
             return -1;
 
-        // Transmissor envia UA para acabar de vez comunicação
-        sendSupervisionFrame(fd, A_ER, C_UA);
+        // Transmissor envia UA para finalizar a comunicação
+        if (sendSupervisionFrame(fd, A_ER, C_UA) == -1) {
+            perror("Erro ao enviar UA");
+            return -1;
+        }
         break;
 
     case LlRx:
-
         // Recetor: aguarda DISC do transmissor
         while (machineState != STOP && retransmissions > 0)
         {
@@ -713,7 +722,6 @@ int llclose(int showStatistics)
                         break;
 
                     case F:
-                        // esta cena não sei
                         if (receivedByte == A_ER)
                             machineState = A;
                         else if (receivedByte != FLAG)
@@ -728,7 +736,6 @@ int llclose(int showStatistics)
                         break;
 
                     case C:
-                        // também afeta esta
                         if (receivedByte == (A_ER ^ C_DISC))
                             machineState = BCC1;
                         else if (receivedByte == FLAG)
@@ -747,80 +754,100 @@ int llclose(int showStatistics)
                     }
                 }
             }
+
+            alarm(0); // Cancela o alarme após receber a resposta
             retransmissions--;
         }
 
-        if (machineState != STOP)
+        if (machineState != STOP) {
+            printf("[llclose] Erro: Não foi possível fechar a conexão.\n");
             return -1;
+        }
 
         // Recetor responde com DISC
-        sendSupervisionFrame(fd, A_RE, C_DISC);
+        if (sendSupervisionFrame(fd, A_RE, C_DISC) == -1) {
+            perror("Erro ao enviar DISC");
+            return -1;
+        }
 
         // Recetor aguarda UA do transmissor
         machineState = START;
+        retransmissions = numberRetransmissions; // Resetar o contador de retransmissões
+
         while (machineState != STOP && retransmissions > 0)
         {
-            if (readByteSerialPort(&receivedByte) > 0)
+            alarm(timeOut);
+            alarmFired = FALSE;
+
+            while (!alarmFired && machineState != STOP)
             {
-                switch (machineState)
+                if (readByteSerialPort(&receivedByte) > 0)
                 {
-                case START:
-                    if (receivedByte == FLAG)
-                        machineState = F;
-                    break;
+                    switch (machineState)
+                    {
+                    case START:
+                        if (receivedByte == FLAG)
+                            machineState = F;
+                        break;
 
-                case F:
-                    if (receivedByte == A_ER)
-                        machineState = A;
-                    else if (receivedByte != FLAG)
-                        machineState = START;
-                    break;
+                    case F:
+                        if (receivedByte == A_ER)
+                            machineState = A;
+                        else if (receivedByte != FLAG)
+                            machineState = START;
+                        break;
 
-                case A:
-                    if (receivedByte == C_UA)
-                        machineState = C;
-                    else if (receivedByte == FLAG)
-                        machineState = F;
-                    break;
+                    case A:
+                        if (receivedByte == C_UA)
+                            machineState = C;
+                        else if (receivedByte == FLAG)
+                            machineState = F;
+                        break;
 
-                case C:
-                    // também afeta esta
-                    if (receivedByte == (A_ER ^ C_UA))
-                        machineState = BCC1;
-                    else if (receivedByte == FLAG)
-                        machineState = F;
-                    break;
+                    case C:
+                        if (receivedByte == (A_ER ^ C_UA))
+                            machineState = BCC1;
+                        else if (receivedByte == FLAG)
+                            machineState = F;
+                        break;
 
-                case BCC1:
-                    if (receivedByte == FLAG)
-                        machineState = STOP;
-                    else
-                        machineState = START;
-                    break;
+                    case BCC1:
+                        if (receivedByte == FLAG)
+                            machineState = STOP;
+                        else
+                            machineState = START;
+                        break;
 
-                default:
-                    break;
+                    default:
+                        break;
+                    }
                 }
             }
+
+            alarm(0); // Cancela o alarme após receber a resposta
+            retransmissions--;
         }
 
-        if (machineState != STOP)
+        if (machineState != STOP) {
+            printf("[llclose] Erro: Não foi possível fechar a conexão corretamente.\n");
             return -1;
+        }
         break;
 
     default:
-        break;
+        fprintf(stderr, "Erro: Função llclose chamada com role desconhecido.\n");
+        return -1;
     }
 
     if (tcflush(fd, TCIOFLUSH) == -1)
     {
         perror("falha ao limpar os buffers do serial port");
-        return -1; // falhou
+        return -1;
     }
 
-    // ainda não fiz isto
     if (showStatistics)
         displayStatistics();
+
     return closeSerialPort();
 }
 
