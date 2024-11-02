@@ -72,24 +72,16 @@ int sendSupervisionFrame(int fd, unsigned char address, unsigned char control)
 }
 
 // Alarm function handler
+// Alarm function handler
 void alarmHandler(int signal)
 {
     printf("[alarmHandler] Sinal recebido: %d\n", signal);
-    alarmFired = FALSE;
+    alarmFired = TRUE;  // Deve ser TRUE para sinalizar que o alarme foi disparado
     alarmCount++;
     printf("[alarmHandler] Alarme disparado número: %d\n", alarmCount);
-
-    if (tcflush(fd, TCIOFLUSH) == -1)
-    {
-        perror("[alarmHandler] Falha ao limpar buffer da serial port");
-    }
-    else
-    {
-        printf("[alarmHandler] Buffer da porta serial limpo com sucesso.\n");
-    }
-
     printf("[alarmHandler] Alarm #%d executado.\n", alarmCount);
 }
+
 
 ////////////////////////////////////////////////
 // LLOPEN
@@ -118,85 +110,67 @@ int llopen(LinkLayer connectionParameters)
     numberRetransmissions = connectionParameters.nRetransmissions;
     role = connectionParameters.role;
 
-    if (role == LlTx)
-    {
+    if (role == LlTx) {
         printf("[llopen] Modo Transmissor\n");
         signal(SIGALRM, alarmHandler);
 
         int attempts = 0;
-        while (attempts < numberRetransmissions)
-        {
+        while (attempts < numberRetransmissions) {
             printf("[llopen] Tentativa %d de %d\n", attempts + 1, numberRetransmissions);
             machineState = START;
             sendSupervisionFrame(fd, A_ER, C_SET);
             printf("[llopen] Transmissor enviou SET\n");
 
-            alarmFired = FALSE;
+            alarmFired = FALSE;  // Garante que o alarme não esteja "ativo" no início de cada tentativa
             alarm(timeOut);
             printf("[llopen] Alarme configurado para %d segundos\n", timeOut);
 
-            while (machineState != STOP && !alarmFired)
-            {
-                receivedByte = 0;
+            while (machineState != STOP && !alarmFired) {
+                receivedByte = 0; // Limpar byte recebido
 
                 int bytesRead = readByteSerialPort(&receivedByte);
-                if (bytesRead > 0)
-                {
-                    switch (machineState)
-                    {
+                if (bytesRead > 0) {
+                    printf("[llopen][Transmissor] Byte recebido: 0x%02X | Estado atual: %d\n", receivedByte, machineState);
+
+                    switch (machineState) {
                     case START:
-                        if (receivedByte == FLAG)
-                            machineState = F;
-                        else
-                            machineState = START;
+                        if (receivedByte == FLAG) machineState = F;
                         break;
                     case F:
-                        if (receivedByte == A_RE)
-                            machineState = A;
-                        else if (receivedByte == FLAG)
-                            machineState = F;
-                        else
-                            machineState = START;
+                        if (receivedByte == A_RE) machineState = A;
+                        else if (receivedByte != FLAG) machineState = START;
                         break;
                     case A:
-                        if (receivedByte == C_UA)
-                            machineState = C;
-                        else
-                            machineState = START;
+                        if (receivedByte == C_UA) machineState = C;
+                        else machineState = START;
                         break;
                     case C:
-                        if (receivedByte == (A_RE ^ C_UA))
-                            machineState = BCC1;
-                        else
-                            machineState = START;
+                        if (receivedByte == (A_RE ^ C_UA)) machineState = BCC1;
+                        else machineState = START;
                         break;
                     case BCC1:
-                        if (receivedByte == FLAG)
-                            machineState = STOP;
-                        else
-                            machineState = START;
+                        if (receivedByte == FLAG) machineState = STOP;
+                        else machineState = START;
                         break;
                     default:
                         machineState = START;
                         break;
                     }
-                }
-                else if (bytesRead < 0)
-                {
+                } else if (bytesRead == 0) {
+                    // printf("[llopen][Transmissor] Nenhum byte lido\n");
+                } else {
                     perror("[llopen][Transmissor] Erro ao ler byte");
                     break;
                 }
             }
 
             alarm(0);
+            printf("[llopen][Transmissor] Alarme cancelado\n");
 
-            if (machineState == STOP)
-            {
+            if (machineState == STOP) {
                 printf("[llopen][Transmissor] Quadro UA recebido com sucesso\n");
-                return fd;
-            }
-            else if (alarmFired)
-            {
+                return fd; // Conexão estabelecida
+            } else if (alarmFired) {
                 printf("[llopen][Transmissor] Timeout ocorreu após %d segundos\n", timeOut);
             }
 
@@ -206,6 +180,7 @@ int llopen(LinkLayer connectionParameters)
         printf("[llopen][Transmissor] Número máximo de retransmissões atingido. Abortando conexão.\n");
         return -1;
     }
+
     else if (role == LlRx)
     {
         printf("[llopen] Modo Receptor\n");
@@ -272,24 +247,23 @@ int llopen(LinkLayer connectionParameters)
         printf("[llopen][Receptor] Quadro UA enviado\n");
         return fd;
     }
-    else
-    {
-        printf("[llopen] Erro: Role desconhecido na conexão.\n");
-        return -1;
-    }
+    printf("[llopen] Erro: Role desconhecido na conexão.\n");
+    return -1;
 }
+
 
 int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *outputMsg, unsigned char bcc2)
 {
     int stuffedSize = 0;
 
-    printf("\nSTUFFING STARTED\n"); // Debug
+    printf("MAX_PAYLOAD_SIZE: %d\n", MAX_PAYLOAD_SIZE);
+    printf("input message size: %d\n", inputSize);
 
     for (int i = 0; i < inputSize; i++)
     {
+        printf("[STUFFING NO INDEX %d]\n", i);
         if (inputMsg[i] == FLAG || inputMsg[i] == ESC)
         {
-            // Precisa de 2 bytes para stuffing
             if (stuffedSize + 2 > MAX_PAYLOAD_SIZE)
             {
                 fprintf(stderr, "Output buffer overflow in byteStuffing\n");
@@ -300,7 +274,6 @@ int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *ou
         }
         else
         {
-            // Precisa de 1 byte
             if (stuffedSize + 1 > MAX_PAYLOAD_SIZE)
             {
                 fprintf(stderr, "Output buffer overflow in byteStuffing\n");
@@ -314,11 +287,20 @@ int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *ou
     {
         if (stuffedSize + 2 > MAX_PAYLOAD_SIZE)
         {
-            fprintf(stderr, "Output buffer overflow in byteStuffing\n");
+            fprintf(stderr, "Output buffer overflow in byteStuffing for BCC2\n");
             return -1;
         }
         outputMsg[stuffedSize++] = ESC;
         outputMsg[stuffedSize++] = bcc2 ^ 0x02;
+    }
+    else
+    {
+        if (stuffedSize + 1 > MAX_PAYLOAD_SIZE)
+        {
+            fprintf(stderr, "Output buffer overflow in byteStuffing for BCC2\n");
+            return -1;
+        }
+        outputMsg[stuffedSize++] = bcc2;
     }
 
     return stuffedSize;
@@ -380,14 +362,22 @@ unsigned char computeBCC2(const unsigned char *buffer, size_t length)
 
 int llwrite(const unsigned char *buf, int bufSize)
 {
-    // no llwrite recebo um packet ou a parte da payload de uma frame apenas?
+    if (bufSize * 2 > MAX_PAYLOAD_SIZE) {
+        fprintf(stderr, "Erro: Payload excede o tamanho máximo permitido após byte stuffing\n");
+        return -1;
+    }
 
-    unsigned char bcc2 = computeBCC2(buf, bufSize); // BCC2, sem byteStuffing
+    unsigned char bcc2 = computeBCC2(buf, bufSize); // Calcula BCC2 sem stuffing
 
     unsigned char stuffedPayload[MAX_PAYLOAD_SIZE];
-    int stuffedPayloadSize = byteStuffing(buf, bufSize, stuffedPayload, bcc2); // aqui terei a length do bytestuffing da payload com bcc2
+    int stuffedPayloadSize = byteStuffing(buf, bufSize, stuffedPayload, bcc2);
 
-    int totalSize = stuffedPayloadSize + 5; // stuffed e 5 bytes adicionais (f, a, c, bcc1, f)
+    if (stuffedPayloadSize == -1) {
+        fprintf(stderr, "Erro no byte stuffing\n");
+        return -1;
+    }
+
+    int totalSize = stuffedPayloadSize + 5; // Recalcula totalSize baseado no stuffedPayloadSize
     unsigned char fullFrame[totalSize];
 
     int attemptCounter = 0;
@@ -396,42 +386,30 @@ int llwrite(const unsigned char *buf, int bufSize)
 
     while (attemptCounter < numberRetransmissions)
     {
-        // Limpa o stuffedFrame antes de cada tentativa de stuffing
-        // está exagerado este size, i know
         cleanBuffer(fullFrame, totalSize, NULL);
-        cleanBuffer(stuffedPayload, stuffedPayloadSize, NULL);
 
         fullFrame[0] = F;
         fullFrame[1] = A_ER;
         fullFrame[2] = C_N(txFrame);
         fullFrame[3] = fullFrame[1] ^ fullFrame[2];
 
-        // Executa o byte stuffing no payload e no bcc2
-        stuffedPayloadSize = byteStuffing(buf, bufSize, stuffedPayload, bcc2);
-        if (stuffedPayloadSize == -1)
-        {
-            fprintf(stderr, "Erro no byte stuffing\n");
-            return -1;
-        }
-
-        for (size_t i = 4; i < stuffedPayloadSize + 4; i++)
-        {
-            fullFrame[i] = stuffedPayload[i - 4];
+        for (int i = 0; i < stuffedPayloadSize; i++) {
+            fullFrame[i + 4] = stuffedPayload[i];
         }
 
         fullFrame[4 + stuffedPayloadSize] = FLAG;
 
         alarmFired = FALSE;
-        alarm(timeOut); // Define o temporizador
+        alarm(timeOut);
 
-        int bytesWritten = writeBytesSerialPort(fullFrame, totalSize); // isto pode estar mal
+        int bytesWritten = writeBytesSerialPort(fullFrame, totalSize);
         if (bytesWritten < 0)
         {
             perror("Erro ao escrever o frame");
-            continue; // Tenta novamente
+            attemptCounter++;
+            continue;
         }
 
-        // Verifica se a transmissão foi bem-sucedida
         while (!successfulTransmission && !alarmFired && !failedTransmission)
         {
             int result = getControlFrame(fd);
@@ -442,17 +420,14 @@ int llwrite(const unsigned char *buf, int bufSize)
             else if (result == C_RR(0) || result == C_RR(1))
             {
                 successfulTransmission = 1;
-                txFrame = (txFrame + 1) % 2; // Alterna o número de sequência
+                txFrame = (txFrame + 1) % 2;
             }
         }
 
-        if (successfulTransmission)
-            break;
+        if (successfulTransmission) break;
+
         attemptCounter++;
     }
-
-    cleanBuffer(fullFrame, totalSize, NULL);
-    cleanBuffer(stuffedPayload, stuffedPayloadSize, NULL);
 
     if (!successfulTransmission)
     {
@@ -461,7 +436,7 @@ int llwrite(const unsigned char *buf, int bufSize)
         return -1;
     }
 
-    printf("Dados aceites com sucesso!\n"); // Debug
+    printf("Dados aceites com sucesso!\n");
     return 0;
 }
 
