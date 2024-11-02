@@ -332,6 +332,10 @@ int llopen(LinkLayer connectionParameters)
                 receivedByte = 0;
 
                 int bytesRead = readByteSerialPort(&receivedByte);
+
+                printf(" Byte RECEBIDOOOOOOO  0x%02X \n", receivedByte);
+
+
                 if (bytesRead > 0)
                 {
                     printf("[llopen][Receptor] Byte recebido: 0x%02X | Estado atual: %d\n", receivedByte, machineState);
