@@ -20,7 +20,6 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate, in
             printf("Iniciando transmissão\n");
 
             FILE *file = fopen(filename, "rb");
-            printf("Tentando abrir o arquivo: %s\n", filename);
             if (!file) {
                 perror("Erro ao abrir o arquivo");
                 llclose(1);
@@ -74,7 +73,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate, in
             int totalBytesRead = 0;
             int bytesRead;
 
-            FILE *outputFile = fopen("received_data.txt", "wb");
+            FILE *outputFile = fopen(filename, "wb");
             if (!outputFile) {
                 perror("Erro ao abrir arquivo de saída");
                 llclose(1);
@@ -93,7 +92,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate, in
                 printf("Erro ao ler os dados\n");
             } else {
                 printf("Total de bytes recebidos: %d\n", totalBytesRead);
-                printf("Dados salvos no arquivo 'received_data.txt'\n");
+                printf("Dados salvos no arquivo '%s'\n", filename);
             }
 
             llclose(1);
