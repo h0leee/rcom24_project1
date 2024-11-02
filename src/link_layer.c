@@ -410,11 +410,7 @@ int llopen(LinkLayer connectionParameters)
                     printf("[llopen][Receptor] Nenhum byte lido\n");
                     continue;
                 }
-                else
-                {
-                    perror("[llopen][Receptor] Erro ao ler byte");
-                    return -1;
-                }
+               
             }
 
             if (machineState == STOP)
