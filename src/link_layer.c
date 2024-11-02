@@ -1,4 +1,3 @@
-
 #include "link_layer.h"
 #include "serial_port.h"
 #include "constants.h"
@@ -120,6 +119,8 @@ int llopen(LinkLayer connectionParameters)
 
         int attempts = 0;
         while (attempts < numberRetransmissions) {
+            tcflush(fd, TCIFLUSH);
+
             printf("[llopen] Tentativa %d de %d\n", attempts + 1, numberRetransmissions);
             machineState = START;
             sendSupervisionFrame(fd, A_ER, C_SET);
@@ -176,6 +177,7 @@ int llopen(LinkLayer connectionParameters)
                 return fd; // Conexão estabelecida
             } else if (alarmFired) {
                 printf("[llopen][Transmissor] Timeout ocorreu após %d segundos\n", timeOut);
+                sleep(1);
             }
 
             attempts++;
@@ -417,6 +419,8 @@ int llwrite(const unsigned char *buf, int bufSize) {
     int failedTransmission = 0;
 
     while (attemptCounter < numberRetransmissions) {
+        tcflush(fd, TCIFLUSH);
+
         // Reset Flags antes de cada tentativa
         successfulTransmission = 0;
         failedTransmission = 0;
@@ -479,6 +483,9 @@ int llwrite(const unsigned char *buf, int bufSize) {
 // START, A, C,  se aparecer uma merda random tenho de mandar o grande rej
 int llread(unsigned char *packet)
 {
+
+    tcflush(fd, TCIFLUSH);
+
     unsigned char receivedByte, cByte;
     LinkLayerState machineState = START;
     int frameIndex = 0;
@@ -632,6 +639,9 @@ int llclose(int showStatistics)
         // Transmissor: inicia desconexão
         while (retransmissions > 0 && machineState != STOP)
         {
+
+            tcflush(fd, TCIFLUSH);
+
             if (sendSupervisionFrame(fd, A_ER, C_DISC) == -1) {
                 perror("Erro ao enviar DISC");
                 retransmissions--;
@@ -860,59 +870,62 @@ unsigned char getControlFrame(int fd)
 
     while (machineState != STOP)
     {
-        // será que tenho de colcoar uma condição para quando retorna 0 bytes escritos?
         if (readByteSerialPort(&receivedByte) > 0)
         {
+            printf("[getControlFrame] Byte recebido: 0x%02X | Estado atual: %d\n", receivedByte, machineState);
+
             switch (machineState)
             {
-            case START:
-                if (receivedByte == FLAG)
-                    machineState = F;
-                break;
+                case START:
+                    if (receivedByte == FLAG)
+                        machineState = F;
+                    break;
 
-            case F:
-                if (receivedByte == A_RE)
-                    machineState = A;
-                else if (receivedByte != FLAG)
+                case F:
+                    if (receivedByte == A_RE)
+                        machineState = A;
+                    else if (receivedByte != FLAG)
+                        machineState = START;
+                    break;
+
+                case A:
+                    if (receivedByte == C_RR(0) || receivedByte == C_RR(1) || receivedByte == C_REJ(0) || receivedByte == C_REJ(1))
+                    {
+                        controlByte = receivedByte;
+                        machineState = C;
+                    }
+                    else if (receivedByte == FLAG)
+                        machineState = F;
+                    else
+                        machineState = START;
+                    break;
+
+                case C:
+                    if (receivedByte == (A_RE ^ controlByte))
+                        machineState = BCC1;
+                    else if (receivedByte == FLAG)
+                        machineState = F;
+                    else
+                        machineState = START;
+                    break;
+
+                case BCC1:
+                    if (receivedByte == FLAG)
+                        machineState = STOP;
+                    else
+                        machineState = START;
+                    break;
+
+                default:
                     machineState = START;
-                break;
-
-            case A:
-                if (receivedByte == C_RR(0) || receivedByte == C_RR(1) || receivedByte == C_REJ(0) || receivedByte == C_REJ(1))
-                {
-                    controlByte = receivedByte;
-                    machineState = C;
-                }
-                else if (receivedByte == FLAG)
-                    machineState = F;
-                else
-                    machineState = START;
-                break;
-
-            case C:
-                if (receivedByte == (A_RE ^ controlByte))
-                    machineState = BCC1;
-                else if (receivedByte == FLAG)
-                    machineState = F;
-                else
-                    machineState = START;
-                break;
-
-            case BCC1:
-                if (receivedByte == FLAG)
-                    machineState = STOP;
-                else
-                    machineState = START;
-                break;
-
-            default:
-                machineState = START;
-                break;
+                    break;
             }
         }
     }
+    printf("[getControlFrame] Control Byte final: 0x%02X\n", controlByte);
     return controlByte;
 }
+
 
 // to do
 void displayStatistics()
