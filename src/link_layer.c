@@ -372,12 +372,21 @@ int llwrite(const unsigned char *buf, int bufSize)
     unsigned char stuffedPayload[MAX_PAYLOAD_SIZE];
     int stuffedPayloadSize = byteStuffing(buf, bufSize, stuffedPayload, bcc2);
 
+
+
     if (stuffedPayloadSize == -1) {
         fprintf(stderr, "Erro no byte stuffing\n");
         return -1;
     }
 
     int totalSize = stuffedPayloadSize + 5; // Recalcula totalSize baseado no stuffedPayloadSize
+    printf("Stuffed Payload Size: %d\n", stuffedPayloadSize);
+    printf("Total Size (with headers): %d\n", totalSize);
+
+    if(totalSize > MAX_PAYLOAD_SIZE) {
+        fprintf(stderr, "Erro: Total size após stuffing excede o limite\n");
+        return -1;
+    }
     unsigned char fullFrame[totalSize];
 
     int attemptCounter = 0;
