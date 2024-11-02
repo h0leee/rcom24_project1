@@ -91,74 +91,6 @@ void alarmHandler(int signal)
     printf("[alarmHandler] Alarm #%d executado.\n", alarmCount);
 }
 
-int makeConnection(LinkLayer *connectionParameters)
-{
-    fd = open(connectionParameters->serialPort, O_RDWR | O_NOCTTY);
-    if (fd < 0)
-    {
-        perror("Erro ao abrir a porta serial");
-        return -1;
-    }
-
-    struct termios newtio;
-    memset(&newtio, 0, sizeof(newtio));
-
-    // Mapeamento do baud rate para constantes termios
-    speed_t baud;
-    switch (connectionParameters->baudRate)
-    {
-    case 9600:
-        baud = B9600;
-        break;
-    case 19200:
-        baud = B19200;
-        break;
-    case 38400:
-        baud = B38400;
-        break;
-    case 57600:
-        baud = B57600;
-        break;
-    case 115200:
-        baud = B115200;
-        break;
-    default:
-        fprintf(stderr, "Baud rate não suportado: %d\n", connectionParameters->baudRate);
-        close(fd);
-        return -1;
-    }
-
-    // Configurações da porta serial
-    cfsetispeed(&newtio, baud);
-    cfsetospeed(&newtio, baud);
-
-    newtio.c_cflag &= ~PARENB; // Sem paridade
-    newtio.c_cflag &= ~CSTOPB; // 1 stop bit
-    newtio.c_cflag &= ~CSIZE;
-    newtio.c_cflag |= CS8; // 8 bits de dados
-    newtio.c_cflag |= (CLOCAL | CREAD);
-
-    newtio.c_iflag = IGNPAR;
-    newtio.c_oflag = 0;
-    newtio.c_lflag = 0;
-
-    // Parâmetros de tempo de leitura
-    newtio.c_cc[VTIME] = 10; // Tempo de espera para ler (em décimos de segundo)
-    newtio.c_cc[VMIN] = 1;   // Número mínimo de caracteres para ler
-
-    tcflush(fd, TCIFLUSH);
-
-    if (tcsetattr(fd, TCSANOW, &newtio) != 0)
-    {
-        perror("Erro ao definir atributos da porta serial");
-        close(fd);
-        return -1;
-    }
-
-    printf("Configuração da porta serial concluída com sucesso\n");
-    return fd;
-}
-
 ////////////////////////////////////////////////
 // LLOPEN
 ////////////////////////////////////////////////
@@ -171,7 +103,7 @@ int llopen(LinkLayer connectionParameters)
     printf("  Retransmissões: %d\n", connectionParameters.nRetransmissions);
     printf("  Timeout: %d\n", connectionParameters.timeout);
 
-    fd = makeConnection(&connectionParameters);
+    fd = openSerialPort(connectionParameters.serialPort, connectionParameters.baudRate);
     if (fd < 0)
     {
         perror("[llopen] Erro ao abrir a porta serial");
@@ -326,6 +258,8 @@ int llopen(LinkLayer connectionParameters)
 
             while (machineState != STOP)
             {
+
+                printf("olaaaa");
                 receivedByte = 0;
 
                 int bytesRead = readByteSerialPort(&receivedByte);
