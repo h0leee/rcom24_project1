@@ -189,8 +189,131 @@ int llopen(LinkLayer connectionParameters)
     switch (connectionParameters.role)
     {
     case LlTx:
-        // (Código do transmissor permanece o mesmo)
-        /* ... */
+        printf("[llopen] Modo Transmissor\n");
+        signal(SIGALRM, alarmHandler);
+
+        for (int attempts = numberRetransmissions; attempts > 0; --attempts)
+        {
+            printf("[llopen] Tentativa %d de %d\n", numberRetransmissions - attempts + 1, numberRetransmissions);
+            machineState = START;
+            sendSupervisionFrame(fd, A_ER, C_SET);
+            printf("[llopen] Transmissor enviou SET\n");
+
+            alarmFired = FALSE;
+            alarm(timeOut);
+            printf("[llopen] Alarme configurado para %d segundos\n", timeOut);
+
+            while (machineState != STOP && !alarmFired)
+            {
+                receivedByte = 0; // Limpar byte recebido
+
+                int bytesRead = readByteSerialPort(&receivedByte);
+                if (bytesRead > 0)
+                {
+                    printf("[llopen][Transmissor] Byte recebido: 0x%02X | Estado atual: %d\n", receivedByte, machineState);
+
+                    switch (machineState)
+                    {
+                    case START:
+                        if (receivedByte == FLAG)
+                        {
+                            machineState = F;
+                            printf("[llopen][Transmissor] Estado mudou para F\n");
+                        }
+                        else
+                        {
+                            printf("[llopen][Transmissor] Byte inesperado no estado START: 0x%02X\n", receivedByte);
+                        }
+                        break;
+                    case F:
+                        if (receivedByte == A_RE)
+                        {
+                            machineState = A;
+                            printf("[llopen][Transmissor] Estado mudou para A\n");
+                        }
+                        else if (receivedByte == FLAG)
+                        {
+                            printf("[llopen][Transmissor] Byte FLAG recebido novamente no estado F\n");
+                        }
+                        else
+                        {
+                            machineState = START;
+                            printf("[llopen][Transmissor] Byte inesperado no estado F: 0x%02X | Voltando para START\n");
+                        }
+                        break;
+                    case A:
+                        if (receivedByte == C_UA)
+                        {
+                            machineState = C;
+                            printf("[llopen][Transmissor] Estado mudou para C\n");
+                        }
+                        else
+                        {
+                            machineState = START;
+                            printf("[llopen][Transmissor] Byte inesperado no estado A: 0x%02X | Voltando para START\n", receivedByte);
+                        }
+                        break;
+                    case C:
+                        if (receivedByte == (A_RE ^ C_UA))
+                        {
+                            machineState = BCC1;
+                            printf("[llopen][Transmissor] BCC1 correto | Estado mudou para BCC1\n");
+                        }
+                        else
+                        {
+                            printf("[llopen][Transmissor] BCC1 incorreto (0x%02X) | Esperado: 0x%02X\n", receivedByte, (A_RE ^ C_UA));
+                            machineState = START;
+                        }
+                        break;
+                    case BCC1:
+                        if (receivedByte == FLAG)
+                        {
+                            machineState = STOP;
+                            printf("[llopen][Transmissor] Estado mudou para STOP\n");
+                        }
+                        else
+                        {
+                            machineState = START;
+                            printf("[llopen][Transmissor] Byte inesperado no estado BCC1: 0x%02X | Voltando para START\n", receivedByte);
+                        }
+                        break;
+                    default:
+                        machineState = START;
+                        printf("[llopen][Transmissor] Estado desconhecido | Voltando para START\n");
+                        break;
+                    }
+                }
+                else if (bytesRead == 0)
+                {
+                    printf("[llopen][Transmissor] Nenhum byte lido\n");
+                }
+                else
+                {
+                    perror("[llopen][Transmissor] Erro ao ler byte");
+                    break;
+                }
+            }
+
+            alarm(0);
+            printf("[llopen][Transmissor] Alarme cancelado\n");
+
+            if (machineState == STOP)
+            {
+                printf("[llopen][Transmissor] Quadro UA recebido com sucesso\n");
+                return fd;
+            }
+            else if (alarmFired)
+            {
+                printf("[llopen][Transmissor] Timeout ocorreu após %d segundos\n", timeOut);
+            }
+            else
+            {
+                printf("[llopen][Transmissor] Saindo do loop de leitura sem receber UA\n");
+            }
+        }
+
+        printf("[llopen][Transmissor] Número máximo de retransmissões atingido. Abortando conexão.\n");
+        return -1;
         break;
 
     case LlRx:
@@ -198,16 +321,10 @@ int llopen(LinkLayer connectionParameters)
         printf("[llopen][Receptor] Aguardando quadro SET...\n");
 
         // Removemos a limitação de tentativas e usamos um loop contínuo
-        while (1)
-        {
             machineState = START;
             alarmFired = FALSE;
 
-            // Configura o alarme para evitar bloqueios eternos em caso de problemas na comunicação
-            alarm(timeOut);
-            printf("[llopen][Receptor] Alarme configurado para %d segundos\n", timeOut);
-
-            while (machineState != STOP && !alarmFired)
+            while (machineState != STOP)
             {
                 receivedByte = 0;
 
@@ -291,16 +408,14 @@ int llopen(LinkLayer connectionParameters)
                 else if (bytesRead == 0)
                 {
                     printf("[llopen][Receptor] Nenhum byte lido\n");
+                    continue;
                 }
                 else
                 {
                     perror("[llopen][Receptor] Erro ao ler byte");
-                    break;
+                    return -1;
                 }
             }
-
-            alarm(0);
-            printf("[llopen][Receptor] Alarme cancelado\n");
 
             if (machineState == STOP)
             {
@@ -309,16 +424,11 @@ int llopen(LinkLayer connectionParameters)
                 printf("[llopen][Receptor] Quadro UA enviado\n");
                 return fd;
             }
-            else if (alarmFired)
-            {
-                printf("[llopen][Receptor] Timeout ocorreu após %d segundos\n", timeOut);
-                // Continua o loop externo para aguardar novamente
-            }
             else
             {
                 printf("[llopen][Receptor] Saindo do loop de leitura sem receber SET\n");
             }
-        }
+        
 
         // Removemos o retorno de erro aqui, pois o loop só sai quando a conexão é estabelecida
         // Caso precise de uma condição de saída, adicione um mecanismo para interromper o loop externo
