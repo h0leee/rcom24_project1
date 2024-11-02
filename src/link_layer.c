@@ -327,6 +327,9 @@ int llopen(LinkLayer connectionParameters)
             alarm(timeOut);
             printf("[llopen][Receptor] Alarme configurado para %d segundos\n", timeOut);
 
+            printf("MACHINE STATE %d \n", machineState);
+            printf("alarme fired é %d \n", alarmFired);
+
             while (machineState != STOP && !alarmFired)
             {
                 receivedByte = 0;
