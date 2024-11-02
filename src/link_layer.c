@@ -1,4 +1,3 @@
-
 #include "link_layer.h"
 #include "serial_port.h"
 #include "constants.h"
@@ -120,6 +119,8 @@ int llopen(LinkLayer connectionParameters)
 
         int attempts = 0;
         while (attempts < numberRetransmissions) {
+            tcflush(fd, TCIFLUSH);
+
             printf("[llopen] Tentativa %d de %d\n", attempts + 1, numberRetransmissions);
             machineState = START;
             sendSupervisionFrame(fd, A_ER, C_SET);
@@ -176,6 +177,7 @@ int llopen(LinkLayer connectionParameters)
                 return fd; // Conexão estabelecida
             } else if (alarmFired) {
                 printf("[llopen][Transmissor] Timeout ocorreu após %d segundos\n", timeOut);
+                sleep(1);
             }
 
             attempts++;
@@ -417,6 +419,8 @@ int llwrite(const unsigned char *buf, int bufSize) {
     int failedTransmission = 0;
 
     while (attemptCounter < numberRetransmissions) {
+        tcflush(fd, TCIFLUSH);
+
         // Reset Flags antes de cada tentativa
         successfulTransmission = 0;
         failedTransmission = 0;
@@ -479,102 +483,148 @@ int llwrite(const unsigned char *buf, int bufSize) {
 // START, A, C,  se aparecer uma merda random tenho de mandar o grande rej
 int llread(unsigned char *packet)
 {
+
     tcflush(fd, TCIFLUSH);
 
     unsigned char receivedByte, cByte;
     LinkLayerState machineState = START;
     int frameIndex = 0;
     unsigned char bcc2;
-    int attempts = numberRetransmissions;
 
-    while (attempts > 0)
+    while (1)
     {
+        // vou ter de alterar aqui
         if (readByteSerialPort(&receivedByte) > 0)
         {
-            // Processar o byte recebido com a máquina de estados
-            int ret = processFrameStateMachine(receivedByte, &machineState, &cByte);
-            if (ret == -1)
-                continue;
-
             switch (machineState)
             {
-            case STOP:
-                // Frame completo recebido, validar BCC2
-                if (frameIndex < 1)
-                {
-                    printf("Erro: Nenhum dado recebido antes da FLAG final.\n");
+            case START:
+                if (receivedByte == FLAG)
+                    machineState = F;
+                break;
+
+            case F:
+                if (receivedByte == A_ER)
+                    machineState = A;
+                else if (receivedByte != FLAG)
                     machineState = START;
-                    frameIndex = 0;
-                    attempts--;
+                break;
+
+            case A:
+                if (receivedByte == C_N(0) || receivedByte == C_N(1))
+                {
+                    machineState = C;
+                    cByte = receivedByte;
+                }
+                else if (receivedByte == FLAG)
+                    machineState = F;
+                else if (receivedByte == C_DISC)
+                {
+                    sendSupervisionFrame(fd, A_RE, C_DISC);
+                    return 0;
+                }
+                else
+                    machineState = START;
+                break;
+
+            case C:
+                if (receivedByte == (A_ER ^ cByte))
+                    machineState = BCC1;
+                else if (receivedByte == FLAG)
+                    machineState = F;
+                else
+                    machineState = START;
+                break;
+
+            case BCC1:
+                if (receivedByte == FLAG)
+                {
+                    if (frameIndex < 1)
+                    {
+                        printf("Erro: Nenhum dado recebido antes da FLAG final.\n");
+                        machineState = START;
+                        frameIndex = 0;
+                        continue;
+                    }
+
+                    bcc2 = packet[frameIndex - 1];
+                    frameIndex--;
+                    packet[frameIndex] = '\0'; // para anular o bcc2 no packet
+
+                    unsigned char calculatedBCC2 = computeBCC2(packet, frameIndex);
+
+                    if (calculatedBCC2 == bcc2)
+                    {
+                        sendSupervisionFrame(fd, A_RE, C_RR(rxFrame));
+                        rxFrame = (rxFrame + 1) % 2;
+                        return frameIndex;
+                    }
+                    else
+                    {
+                        cleanBuffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
+
+                        if (tcflush(fd, TCIFLUSH) == -1)
+                        {
+                            perror("falha ao limpar buffer de serial port");
+                        }
+
+                        printf("Erro: BCC2 inválido. Necessária retransmissão.\n");
+                        sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
+                        machineState = START;
+                        frameIndex = 0;
+                        continue;
+                    }
+                }
+                else if (frameIndex >= MAX_PAYLOAD_SIZE)
+                {
+                    perror("[LLREAD] Overflow no buffer de dados");
                     sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
+                    cleanBuffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
+                    machineState = START;
                     continue;
                 }
-
-                bcc2 = packet[frameIndex - 1];
-                frameIndex--;
-                packet[frameIndex] = '\0'; // Anular o bcc2 no packet
-
-                unsigned char calculatedBCC2 = computeBCC2(packet, frameIndex);
-
-                if (calculatedBCC2 == bcc2)
+                else if (receivedByte == ESC)
                 {
-                    sendSupervisionFrame(fd, A_RE, C_RR(rxFrame));
-                    rxFrame = (rxFrame + 1) % 2;
-                    return frameIndex; // Sucesso
+                    machineState = ESC_FOUND;
                 }
                 else
                 {
-                    cleanBuffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
+                    packet[frameIndex++] = receivedByte;
+                }
+                break;
 
-                    if (tcflush(fd, TCIFLUSH) == -1)
-                    {
-                        perror("falha ao limpar buffer de serial port");
-                    }
-
-                    printf("Erro: BCC2 inválido. Necessária retransmissão.\n");
-                    sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
+            case ESC_FOUND:
+                machineState = BCC1;
+                if (receivedByte == 0x5E)
+                {
+                    packet[frameIndex++] = FLAG;
+                }
+                else if (receivedByte == 0x5D)
+                {
+                    packet[frameIndex++] = ESC;
+                }
+                else
+                {
+                    printf("Erro: sequência de escape inválida.\n");
                     machineState = START;
                     frameIndex = 0;
-                    attempts--;
-                    continue;
                 }
                 break;
 
             default:
+                machineState = START;
+                frameIndex = 0;
                 break;
             }
-
-            // Armazenar bytes de dados
-            if (machineState == BCC1 && receivedByte != FLAG && receivedByte != ESC)
-            {
-                if (frameIndex < MAX_PAYLOAD_SIZE)
-                {
-                    packet[frameIndex++] = receivedByte;
-                }
-                else
-                {
-                    perror("[llread] Overflow no buffer de dados");
-                    sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
-                    cleanBuffer(packet, MAX_PAYLOAD_SIZE, &frameIndex);
-                    machineState = START;
-                    attempts--;
-                    continue;
-                }
-            }
-        }
-        else
-        {
-            // Implementar timeout ou esperar por mais bytes
-            // Dependendo de como readByteSerialPort lida com timeouts
-            attempts--;
-            printf("[llread] Timeout ou erro na leitura. Tentativas restantes: %d\n", attempts);
-            sendSupervisionFrame(fd, A_RE, C_REJ(rxFrame));
         }
     }
 
-    printf("[llread] Erro: Número máximo de tentativas atingido.\n");
     return -1;
 }
+
+////////////////////////////////////////////////
+// LLCLOSE
+////////////////////////////////////////////////
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
@@ -592,6 +642,8 @@ int llclose(int showStatistics)
         // Transmissor: inicia desconexão
         while (retransmissions > 0 && machineState != STOP)
         {
+            tcflush(fd, TCIFLUSH);
+
             if (sendSupervisionFrame(fd, A_ER, C_DISC) == -1) {
                 perror("Erro ao enviar DISC");
                 retransmissions--;
@@ -811,6 +863,7 @@ int llclose(int showStatistics)
     return closeSerialPort();
 }
 
+
 // ela pode estar mal
 unsigned char getControlFrame(int fd)
 {
@@ -820,59 +873,62 @@ unsigned char getControlFrame(int fd)
 
     while (machineState != STOP)
     {
-        // será que tenho de colcoar uma condição para quando retorna 0 bytes escritos?
         if (readByteSerialPort(&receivedByte) > 0)
         {
+            printf("[getControlFrame] Byte recebido: 0x%02X | Estado atual: %d\n", receivedByte, machineState);
+
             switch (machineState)
             {
-            case START:
-                if (receivedByte == FLAG)
-                    machineState = F;
-                break;
+                case START:
+                    if (receivedByte == FLAG)
+                        machineState = F;
+                    break;
 
-            case F:
-                if (receivedByte == A_RE)
-                    machineState = A;
-                else if (receivedByte != FLAG)
+                case F:
+                    if (receivedByte == A_RE)
+                        machineState = A;
+                    else if (receivedByte != FLAG)
+                        machineState = START;
+                    break;
+
+                case A:
+                    if (receivedByte == C_RR(0) || receivedByte == C_RR(1) || receivedByte == C_REJ(0) || receivedByte == C_REJ(1))
+                    {
+                        controlByte = receivedByte;
+                        machineState = C;
+                    }
+                    else if (receivedByte == FLAG)
+                        machineState = F;
+                    else
+                        machineState = START;
+                    break;
+
+                case C:
+                    if (receivedByte == (A_RE ^ controlByte))
+                        machineState = BCC1;
+                    else if (receivedByte == FLAG)
+                        machineState = F;
+                    else
+                        machineState = START;
+                    break;
+
+                case BCC1:
+                    if (receivedByte == FLAG)
+                        machineState = STOP;
+                    else
+                        machineState = START;
+                    break;
+
+                default:
                     machineState = START;
-                break;
-
-            case A:
-                if (receivedByte == C_RR(0) || receivedByte == C_RR(1) || receivedByte == C_REJ(0) || receivedByte == C_REJ(1))
-                {
-                    controlByte = receivedByte;
-                    machineState = C;
-                }
-                else if (receivedByte == FLAG)
-                    machineState = F;
-                else
-                    machineState = START;
-                break;
-
-            case C:
-                if (receivedByte == (A_RE ^ controlByte))
-                    machineState = BCC1;
-                else if (receivedByte == FLAG)
-                    machineState = F;
-                else
-                    machineState = START;
-                break;
-
-            case BCC1:
-                if (receivedByte == FLAG)
-                    machineState = STOP;
-                else
-                    machineState = START;
-                break;
-
-            default:
-                machineState = START;
-                break;
+                    break;
             }
         }
     }
+    printf("[getControlFrame] Control Byte final: 0x%02X\n", controlByte);
     return controlByte;
 }
+
 
 // to do
 void displayStatistics()
