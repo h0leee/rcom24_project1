@@ -26,9 +26,6 @@ int fd;
 int txFrame = 0, rxFrame = 1;
 
 void cleanBuffer(unsigned char* buffer, int bufferSize, int* dataSize) {
-    if (buffer == NULL || dataSize == NULL || bufferSize <= 0) {
-        return;
-    }
 
     memset(buffer, 0, bufferSize);
     *dataSize = 0;
@@ -263,12 +260,13 @@ int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *ou
 {
     int stuffedSize = 0;
 
+    // Debugging information (consider removing or disabling in production)
     printf("MAX_PAYLOAD_SIZE: %d\n", MAX_PAYLOAD_SIZE);
-    printf("input message size: %d\n", inputSize);
+    printf("Input message size: %d\n", inputSize);
 
     for (int i = 0; i < inputSize; i++)
     {
-        printf("[STUFFING NO INDEX %d]\n", i);
+        printf("[STUFFING AT INDEX %d]\n", i);
         if (inputMsg[i] == FLAG || inputMsg[i] == ESC)
         {
             if (stuffedSize + 2 > MAX_PAYLOAD_SIZE)
@@ -277,7 +275,7 @@ int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *ou
                 return -1;
             }
             outputMsg[stuffedSize++] = ESC;
-            outputMsg[stuffedSize++] = inputMsg[i] ^ 0x02;
+            outputMsg[stuffedSize++] = inputMsg[i] ^ 0x20; // XOR with 0x20 as per protocol
         }
         else
         {
@@ -290,6 +288,7 @@ int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *ou
         }
     }
 
+    // Handle BCC2 (Block Check Character)
     if (bcc2 == FLAG || bcc2 == ESC)
     {
         if (stuffedSize + 2 > MAX_PAYLOAD_SIZE)
@@ -298,7 +297,7 @@ int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *ou
             return -1;
         }
         outputMsg[stuffedSize++] = ESC;
-        outputMsg[stuffedSize++] = bcc2 ^ 0x02;
+        outputMsg[stuffedSize++] = bcc2 ^ 0x20; // XOR with 0x20 as per protocol
     }
     else
     {
@@ -313,7 +312,7 @@ int byteStuffing(const unsigned char *inputMsg, int inputSize, unsigned char *ou
     return stuffedSize;
 }
 
-// função usada para reverter o byte stuffing aplicado na mensagem
+// Função usada para reverter o byte stuffing aplicado na mensagem
 int byteDestuffing(const unsigned char *inputMsg, int inputSize, unsigned char *outputMsg, int maxOutputSize)
 {
     int destuffedSize = 0;
@@ -333,7 +332,7 @@ int byteDestuffing(const unsigned char *inputMsg, int inputSize, unsigned char *
                 fprintf(stderr, "Incomplete escape sequence\n");
                 return -1;
             }
-            outputMsg[destuffedSize++] = inputMsg[i + 1] ^ 0x20;
+            outputMsg[destuffedSize++] = inputMsg[i + 1] ^ 0x20; // XOR with 0x20 as per protocol
             i += 2;
         }
         else
@@ -368,7 +367,7 @@ unsigned char computeBCC2(const unsigned char *buffer, size_t length)
 ////////////////////////////////////////////////
 
 int llwrite(const unsigned char *buf, int bufSize) {
-    if (bufSize * 2 > MAX_PAYLOAD_SIZE) {
+    if (bufSize * 2 + 5 > MAX_PAYLOAD_SIZE) { // 5 bytes para FLAG, A, C, BCC, FLAG
         fprintf(stderr, "Erro: Payload excede o tamanho máximo permitido após byte stuffing\n");
         return -1;
     }
@@ -418,11 +417,12 @@ int llwrite(const unsigned char *buf, int bufSize) {
     int failedTransmission = 0;
 
     while (attemptCounter < numberRetransmissions) {
-        cleanBuffer(fullFrame, totalSize, NULL);
+        // Reset Flags antes de cada tentativa
+        successfulTransmission = 0;
+        failedTransmission = 0;
 
         alarmFired = FALSE;
         alarm(timeOut);
-
         printf("Tentativa de transmissão #%d\n", attemptCounter + 1);
 
         int bytesWritten = writeBytesSerialPort(fullFrame, totalSize);
@@ -432,17 +432,30 @@ int llwrite(const unsigned char *buf, int bufSize) {
             continue;
         }
 
-        while (!successfulTransmission && !alarmFired && !failedTransmission) {
-            int result = getControlFrame(fd);
-            if (result == C_REJ(0) || result == C_REJ(1)) {
-                failedTransmission = 1;
-            } else if (result == C_RR(0) || result == C_RR(1)) {
-                successfulTransmission = 1;
-                txFrame = (txFrame + 1) % 2;
-            }
+        printf("[llwrite] Esperando resposta...\n");
+
+        // Chama getControlFrame para receber a resposta
+        unsigned char result = getControlFrame(fd); // Sem argumento timeout
+
+        // Cancela o alarme imediatamente após receber a resposta
+        alarm(0);
+        printf("[llwrite] Alarme cancelado\n");
+
+        if (result == C_REJ(0) || result == C_REJ(1)) {
+            failedTransmission = 1;
+        } else if (result == C_RR(0) || result == C_RR(1)) {
+            successfulTransmission = 1;
+            txFrame = (txFrame + 1) % 2;
         }
 
-        if (successfulTransmission) break;
+        if (successfulTransmission) {
+            printf("[llwrite] Transmissão bem-sucedida na tentativa #%d\n", attemptCounter + 1);
+            break;
+        }
+
+        if (failedTransmission) {
+            printf("[llwrite] Transmissão falhou na tentativa #%d\n", attemptCounter + 1);
+        }
 
         attemptCounter++;
     }
