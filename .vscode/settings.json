@@ -7,6 +7,7 @@
     "constants.h": "c",
     "stdlib.h": "c",
     "termios.h": "c",
-    "link_layer.h": "c"
+    "link_layer.h": "c",
+    "unistd.h": "c"
   }
 }
