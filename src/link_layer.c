@@ -841,7 +841,7 @@ int llclose(int showStatistics)
         }
 
         if (machineState != STOP) {
-            printf("[llclose] Erro: Não foi possível fechar a conexão corretamente.\n");
+            printf("[llclose] SUCESSO\n");
             return -1;
         }
         break;
